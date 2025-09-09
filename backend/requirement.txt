@@ -1,0 +1,13 @@
+loguru
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+sqlalchemy
+psycopg2
+asyncpg
+python-dotenv
+python-multipart
+qdrant-client
+redis
+neo4j
