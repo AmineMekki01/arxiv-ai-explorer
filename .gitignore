@@ -1,3 +1,10 @@
+# Airflow runtime files (generated in airflow/ folder)
+airflow/logs/
+airflow/plugins/
+
+airflow.cfg
+# Data directories
+data/
 plan.md
 
 # Byte-compiled / optimized / DLL files

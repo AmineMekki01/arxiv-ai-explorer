@@ -1,0 +1,21 @@
+FROM apache/airflow:2.10.0
+
+USER root
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+RUN pip install --no-cache-dir \
+    arxiv==2.2.0 \
+    PyPDF2==3.0.1 \
+    PyMuPDF==1.26.4 \
+    psycopg2-binary \
+    pydantic \
+    pydantic-settings \
+    asyncpg

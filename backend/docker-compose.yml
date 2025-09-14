@@ -1,22 +1,65 @@
+x-airflow-common:
+  &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile.airflow
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW__WEBSERVER__RBAC: 'true'
+    DATABASE_URL: ${DATABASE_URL:-postgresql://researchmind:password@postgres:5432/researchmind}
+    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    ARXIV_CATEGORIES: ${ARXIV_CATEGORIES:-cs.AI,cs.CL,cs.LG}
+    ARXIV_MAX_RESULTS: ${ARXIV_MAX_RESULTS:-50}
+
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./airflow/config:/opt/airflow/config
+    - ./src:/opt/airflow/src
+    - ./data:/opt/airflow/data
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  networks:
+    - researchmind-network
+
 services:
-  # PostgreSQL Database
   postgres:
-    image: postgres:16-alpine
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
     container_name: researchmind-postgres
     environment:
-      POSTGRES_DB: researchmind
-      POSTGRES_USER: researchmind
-      POSTGRES_PASSWORD: password
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_MULTIPLE_DATABASES: researchmind,airflow
+      POSTGRES_MULTIPLE_USERS: researchmind,airflow
+      POSTGRES_MULTIPLE_PASSWORDS: password,airflow
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres:/docker-entrypoint-initdb.d
+      - ./docker/postgres/init-multiple-databases.sh:/docker-entrypoint-initdb.d/01-init-multiple-databases.sh
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/02-init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U researchmind -d researchmind"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
       retries: 5
+      start_period: 10s
+    restart: always
     networks:
       - researchmind-network
 
@@ -30,71 +73,14 @@ services:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
+      interval: 10s
+      timeout: 5s
       retries: 5
+      start_period: 5s
+    restart: always
     networks:
       - researchmind-network
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: researchmind-qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-      - ./docker/qdrant/config.yml:/qdrant/config/production.yaml
-    environment:
-      QDRANT__SERVICE__HTTP_PORT: 6333
-      QDRANT__SERVICE__GRPC_PORT: 6334
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e 'GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q 'HTTP/1.1 200' <&3"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 15s
-    networks:
-      - researchmind-network
-
-  neo4j:
-    image: neo4j:latest
-    container_name: researchmind-neo4j
-    environment:
-      NEO4J_AUTH: neo4j/password
-      NEO4J_PLUGINS: '["apoc", "graph-data-science"]'
-      NEO4J_dbms_security_procedures_unrestricted: apoc.*,gds.*
-      NEO4J_dbms_memory_heap_initial__size: 512m
-      NEO4J_dbms_memory_heap_max__size: 2G
-      NEO4J_dbms_memory_pagecache_size: 1G
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
-      - neo4j_conf:/conf
-      - neo4j_plugins:/plugins
-    healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    networks:
-      - researchmind-network
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: researchmind-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    environment:
-      - OLLAMA_HOST=0.0.0.0
-    networks:
-      - researchmind-network
-
+  
   backend:
     build:
       context: .
@@ -105,9 +91,6 @@ services:
     environment:
       - DATABASE_URL=postgresql://researchmind:password@postgres:5432/researchmind
       - REDIS_URL=redis://redis:6379/0
-      - QDRANT_HOST=qdrant
-      - NEO4J_URI=bolt://neo4j:7687
-      - OLLAMA_BASE_URL=http://ollama:11434
     volumes:
       - ./src:/app/src
       - ./data:/app/data
@@ -117,23 +100,71 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
+
+    restart: always
     networks:
       - researchmind-network
 
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,dags,plugins}
+        exec /entrypoint airflow db init
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: airflow
+      _AIRFLOW_WWW_USER_PASSWORD: airflow
+      _AIRFLOW_WWW_USER_EMAIL: admin@example.com
+      _AIRFLOW_WWW_USER_FIRSTNAME: Air
+      _AIRFLOW_WWW_USER_LASTNAME: Flow
+      _AIRFLOW_WWW_USER_ROLE: Admin
+    user: "0:0"
+    volumes:
+      - ./airflow:/opt/airflow
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
 
 volumes:
   postgres_data:
   redis_data:
-  qdrant_data:
-  neo4j_data:
-  neo4j_logs:
-  neo4j_conf:
-  neo4j_plugins:
-  ollama_data:
 
 networks:
   researchmind-network:

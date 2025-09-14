@@ -1,0 +1,52 @@
+# Ignore logs and cache
+airflow/logs/
+airflow/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+.env
+.venv
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ignore local development files
+*.log
+*.sqlite
+.DS_Store
+
+# Ignore local data
+data/
+!data/.gitkeep
+
+# Ignore local configuration
+airflow/airflow.cfg
+airflow/webserver_config.py
+
+# Ignore git files
+.git/
+.gitignore
+
+# Ignore Python cache and build files
+*.egg-info/
+*.egg
+build/
+dist/
+*.so
+
+# Ignore Jupyter notebooks
+*.ipynb
+
+# Ignore test files
+tests/
+
+# Ignore local development overrides
+local_settings.py

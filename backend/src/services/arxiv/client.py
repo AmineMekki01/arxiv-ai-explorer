@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
@@ -11,8 +10,7 @@ from urllib.parse import urlencode
 import aiohttp
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-logger = logging.getLogger(__name__)
-
+from src.core import logger
 
 class ArxivClient:
     """Client for interacting with the arXiv API."""
