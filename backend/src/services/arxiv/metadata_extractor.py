@@ -8,111 +8,51 @@ from src.core import logger
 
 class MetadataExtractor:
     """Extractor for enhanced metadata from arXiv papers."""
-    
-    def __init__(self) -> None:
-        self.methodology_keywords = {
-            'machine learning', 'deep learning', 'neural network', 'transformer',
-            'attention mechanism', 'convolutional', 'recurrent', 'lstm', 'gru',
-            'reinforcement learning', 'supervised learning', 'unsupervised learning',
-            'semi-supervised', 'self-supervised', 'transfer learning', 'fine-tuning',
-            'pre-training', 'bert', 'gpt', 'llm', 'language model', 'nlp',
-            'computer vision', 'image classification', 'object detection',
-            'segmentation', 'generative model', 'gan', 'vae', 'diffusion',
-            'optimization', 'gradient descent', 'backpropagation', 'adam',
-            'regularization', 'dropout', 'batch normalization', 'layer normalization'
-        } # will adapt this 
-        
-        self.contribution_patterns = [
-            r'(?i)we\s+(?:propose|present|introduce|develop|design)',
-            r'(?i)our\s+(?:contribution|approach|method|model|framework)',
-            r'(?i)(?:novel|new)\s+(?:approach|method|model|framework|technique)',
-            r'(?i)(?:first|pioneering)\s+(?:work|study|approach)',
-            r'(?i)(?:state-of-the-art|sota)\s+(?:performance|results)',
-        ]
-        
-        self.evaluation_patterns = [
-            r'(?i)(?:experiment|evaluation|benchmark|test)\s+(?:on|with|using)',
-            r'(?i)(?:dataset|corpus|benchmark):\s*([A-Z][A-Za-z0-9\-_]+)',
-            r'(?i)(?:accuracy|precision|recall|f1|bleu|rouge)\s*(?:score|of)?\s*(?::|=)?\s*([0-9.]+)',
-        ]
-    
-    def _extract_keywords(self, text: str) -> List[str]:
-        """Extract key technical terms and concepts."""
-        text_lower = text.lower()
-        found_keywords = []
-        
-        for keyword in self.methodology_keywords:
-            if keyword in text_lower:
-                found_keywords.append(keyword)
-        
-        capitalized_terms = re.findall(r'\b[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*\b', text)
-        
-        common_words = {'The', 'This', 'That', 'These', 'Those', 'We', 'Our', 'In', 'On', 'At', 'To', 'For'}
-        technical_terms = []
-        
-        for term in capitalized_terms:
-            words = term.split()
-            if (2 <= len(words) <= 4 and 
-                not any(word in common_words for word in words) and
-                len(term) > 4):
-                technical_terms.append(term)
-        
-        all_keywords = list(set(found_keywords + technical_terms))
-        return all_keywords[:20]
-    
-    def _extract_contributions(self, text: str) -> List[str]:
-        """Extract stated contributions from the paper."""
-        contributions = []
-        
-        for pattern in self.contribution_patterns:
-            matches = re.finditer(pattern, text)
-            for match in matches:
-                start = max(0, match.start() - 50)
-                end = min(len(text), match.end() + 200)
-                context = text[start:end]
-                
-                sentences = re.split(r'[.!?]', context)
-                for sentence in sentences:
-                    if match.group().lower() in sentence.lower():
-                        clean_sentence = sentence.strip()
-                        if len(clean_sentence) > 20:
-                            contributions.append(clean_sentence)
-                        break
-        
-        return contributions[:5]
-    
-    def _extract_datasets(self, text: str) -> List[str]:
-        """Extract mentioned datasets and benchmarks."""
-        datasets = set()
-        
-        dataset_patterns = [
-            r'(?i)(?:dataset|corpus|benchmark):\s*([A-Z][A-Za-z0-9\-_]+)',
-            r'(?i)(?:on|using|with)\s+(?:the\s+)?([A-Z][A-Za-z0-9\-_]+)\s+(?:dataset|corpus|benchmark)',
-            r'\b(MNIST|CIFAR|ImageNet|COCO|SQuAD|GLUE|SuperGLUE|WMT|CoNLL|Penn\s+Treebank)\b',
-        ]
-        
-        for pattern in dataset_patterns:
-            matches = re.findall(pattern, text)
-            for match in matches:
-                if isinstance(match, tuple):
-                    match = match[0] if match[0] else match[1]
-                if len(match) > 2:
-                    datasets.add(match)
-        
-        return list(datasets)[:10]
-    
     def _extract_metrics(self, text: str) -> Dict[str, float]:
         """Extract performance metrics and scores."""
         metrics = {}
         
         metric_patterns = [
-            (r'(?i)accuracy\s*(?:of|:|=)?\s*([0-9.]+)%?', 'accuracy'),
-            (r'(?i)precision\s*(?:of|:|=)?\s*([0-9.]+)%?', 'precision'),
-            (r'(?i)recall\s*(?:of|:|=)?\s*([0-9.]+)%?', 'recall'),
-            (r'(?i)f1\s*(?:score)?\s*(?:of|:|=)?\s*([0-9.]+)%?', 'f1'),
-            (r'(?i)bleu\s*(?:score)?\s*(?:of|:|=)?\s*([0-9.]+)%?', 'bleu'),
-            (r'(?i)rouge\s*(?:score)?\s*(?:of|:|=)?\s*([0-9.]+)%?', 'rouge'),
+            # Classification
+            (r'(?i)\baccuracy\b\s*(?:of|=|:)?\s*([0-9.]+)%?', 'accuracy'),
+            (r'(?i)\btop[- ]?(\d+)\s*accuracy\b\s*(?:=|:)?\s*([0-9.]+)%?', 'top_k_accuracy'),
+
+            # Precision / Recall / F1
+            (r'(?i)\bprecision\b\s*(?:=|:)?\s*([0-9.]+)%?', 'precision'),
+            (r'(?i)\brecall\b\s*(?:=|:)?\s*([0-9.]+)%?', 'recall'),
+            (r'(?i)\bf1(?:[- ]?score)?\b\s*(?:=|:)?\s*([0-9.]+)%?', 'f1'),
+
+            # IR / Ranking
+            (r'(?i)\bndcg(?:@\d+)?\b\s*(?:=|:)?\s*([0-9.]+)%?', 'ndcg'),
+            (r'(?i)\bmap\b\s*(?:=|:)?\s*([0-9.]+)%?', 'map'),
+            (r'(?i)\bmrr\b\s*(?:=|:)?\s*([0-9.]+)%?', 'mrr'),
+
+            # NLP
+            (r'(?i)\bbleu\b\s*(?:score)?\s*(?:=|:)?\s*([0-9.]+)', 'bleu'),
+            (r'(?i)\brouge(?:[- ]?[LN]|\b)\s*(?:=|:)?\s*([0-9.]+)', 'rouge'),
+            (r'(?i)\bperplexity\b\s*(?:=|:)?\s*([0-9.]+)', 'perplexity'),
+
+            # CV
+            (r'(?i)\bmAP\b\s*(?:=|:)?\s*([0-9.]+)', 'map'),
+            (r'(?i)\bIoU\b\s*(?:=|:)?\s*([0-9.]+)', 'iou'),
+            (r'(?i)\bdice\b\s*(?:=|:)?\s*([0-9.]+)', 'dice'),
+            (r'(?i)\bpsnr\b\s*(?:=|:)?\s*([0-9.]+)', 'psnr'),
+            (r'(?i)\bssim\b\s*(?:=|:)?\s*([0-9.]+)', 'ssim'),
+            (r'(?i)\bfid\b\s*(?:=|:)?\s*([0-9.]+)', 'fid'),
+
+            # Regression
+            (r'(?i)\bmae\b\s*(?:=|:)?\s*([0-9.]+)', 'mae'),
+            (r'(?i)\brmse\b\s*(?:=|:)?\s*([0-9.]+)', 'rmse'),
+            (r'(?i)\bmse\b\s*(?:=|:)?\s*([0-9.]+)', 'mse'),
+
+            # Backend / Systems
+            (r'(?i)\blatency\b\s*(?:=|:)?\s*([0-9.]+)\s*(ms|s|µs)?', 'latency'),
+            (r'(?i)\bthroughput\b\s*(?:=|:)?\s*([0-9.]+)\s*(req/s|rps|qps|tps)?', 'throughput'),
+            (r'(?i)\buptime\b\s*(?:=|:)?\s*([0-9.]+)%?', 'uptime'),
+            (r'(?i)\bavailability\b\s*(?:=|:)?\s*([0-9.]+)%?', 'availability'),
+            (r'(?i)\bcpu\s*usage\b\s*(?:=|:)?\s*([0-9.]+)%?', 'cpu_usage'), 
         ]
+
         
         for pattern, metric_name in metric_patterns:
             matches = re.findall(pattern, text)
@@ -131,44 +71,40 @@ class MetadataExtractor:
         if not authors:
             return {}
         
-        text = paper_data.get('content', '') or paper_data.get('summary', '')
+        text = paper_data.get('content', '') or paper_data.get('abstract', '')
+
+        pre_abstract_text = text
+        m = re.search(r'(?i)\babstract\b', text)
+        if m:
+            pre_abstract_text = text[: m.start()]
+
+        if pre_abstract_text:
+            words = pre_abstract_text.split()
+            if len(words) > 1000:
+                pre_abstract_text = " ".join(words[:1000])
         
+
         institution_patterns = [
-            r'\b([A-Z][a-z]+\s+University)\b',
-            r'\b([A-Z][a-z]+\s+Institute(?:\s+of\s+Technology)?)\b',
-            r'\b([A-Z][a-z]+\s+College)\b',
-            r'\b(MIT|Stanford|Harvard|Berkeley|CMU|Google|Microsoft|Facebook|OpenAI|DeepMind)\b',
+            r'(?i)\b([A-Z][A-Za-z&\.\'-]+(?:\s+[A-Z][A-Za-z&\.\'-]+)*\s+University)\b',
+            r'(?i)\b([A-Z][A-Za-z&\.\'-]+(?:\s+[A-Z][A-Za-z&\.\'-]+)*\s+Institute(?:\s+of\s+Technology)?)\b',
+            r'(?i)\b([A-Z][A-Za-z&\.\'-]+(?:\s+[A-Z][A-Za-z&\.\'-]+)*\s+College)\b',
+            r'(?i)\b([A-Z][A-Za-z&\.\'-]+(?:\s+[A-Z][A-Za-z&\.\'-]+)*\s+Academy)\b',
+            r'(?i)\b((?:University|Institute(?:\s+of\s+Technology)?|College|Academy)\s+of\s+[A-Z][A-Za-z&\.\'-]+(?:\s+[A-Z][A-Za-z&\.\'-]+)*)\b',
+            r'(?i)\b([A-Za-z][A-Za-z\s,&\.\'-]*Affiliation(?:s)?)\b',
+            r'(?i)\b(MIT|Stanford|Harvard|Berkeley|CMU|Google|Microsoft|Facebook|OpenAI|DeepMind)\b',
         ]
         
         institutions = set()
         for pattern in institution_patterns:
-            matches = re.findall(pattern, text)
+            matches = re.findall(pattern, pre_abstract_text)
             institutions.update(matches)
         
         return {
             'author_count': len(authors),
-            'authors': authors[:10],
+            'authors': authors,
             'institutions': list(institutions)[:5],
         }
-    
-    def _analyze_paper_type(self, paper_data: Dict[str, Any]) -> str:
-        """Classify the type of paper based on content."""
-        text = (paper_data.get('content', '') + ' ' + 
-                paper_data.get('title', '') + ' ' + 
-                paper_data.get('summary', '')).lower()
-        
-        if any(term in text for term in ['survey', 'review', 'overview', 'comprehensive']):
-            return 'survey'
-        elif any(term in text for term in ['dataset', 'corpus', 'benchmark', 'collection']):
-            return 'dataset'
-        elif any(term in text for term in ['empirical', 'experimental', 'evaluation', 'comparison']):
-            return 'empirical'
-        elif any(term in text for term in ['theoretical', 'analysis', 'proof', 'theorem']):
-            return 'theoretical'
-        elif any(term in text for term in ['system', 'framework', 'tool', 'implementation']):
-            return 'system'
-        else:
-            return 'research'
+
     
     def _extract_research_area(self, paper_data: Dict[str, Any]) -> str:
         """Determine the primary research area."""
@@ -177,16 +113,45 @@ class MetadataExtractor:
         
         category_mapping = {
             'cs.AI': 'Artificial Intelligence',
-            'cs.LG': 'Machine Learning',
-            'cs.CL': 'Natural Language Processing',
-            'cs.CV': 'Computer Vision',
-            'cs.IR': 'Information Retrieval',
-            'cs.RO': 'Robotics',
+            'cs.AR': 'Hardware Architecture',
+            'cs.CC': 'Computational Complexity',
+            'cs.CE': 'Computational Engineering, Finance, and Science',
+            'cs.CG': 'Computational Geometry',
+            'cs.CL': 'Computation and Language (NLP)',
             'cs.CR': 'Cryptography and Security',
+            'cs.CV': 'Computer Vision and Pattern Recognition',
+            'cs.CY': 'Computers and Society',
             'cs.DB': 'Databases',
+            'cs.DC': 'Distributed, Parallel, and Cluster Computing',
+            'cs.DL': 'Digital Libraries',
+            'cs.DM': 'Discrete Mathematics',
             'cs.DS': 'Data Structures and Algorithms',
+            'cs.ET': 'Emerging Technologies',
+            'cs.FL': 'Formal Languages and Automata Theory',
+            'cs.GL': 'General Literature',
+            'cs.GR': 'Graphics',
+            'cs.GT': 'Computer Science and Game Theory',
             'cs.HC': 'Human-Computer Interaction',
+            'cs.IR': 'Information Retrieval',
+            'cs.IT': 'Information Theory',
+            'cs.LG': 'Machine Learning',
+            'cs.LO': 'Logic in Computer Science',
+            'cs.MA': 'Multiagent Systems',
+            'cs.MM': 'Multimedia',
+            'cs.MS': 'Mathematical Software',
+            'cs.NA': 'Numerical Analysis (alias of math.NA)',
             'cs.NE': 'Neural and Evolutionary Computing',
+            'cs.NI': 'Networking and Internet Architecture',
+            'cs.OH': 'Other Computer Science',
+            'cs.OS': 'Operating Systems',
+            'cs.PF': 'Performance',
+            'cs.PL': 'Programming Languages',
+            'cs.RO': 'Robotics',
+            'cs.SC': 'Symbolic Computation',
+            'cs.SD': 'Sound',
+            'cs.SE': 'Software Engineering',
+            'cs.SI': 'Social and Information Networks',
+            'cs.SY': 'Systems and Control (alias of eess.SY)',
             'stat.ML': 'Machine Learning',
         }
         
@@ -213,33 +178,77 @@ class MetadataExtractor:
         
         content = paper_data.get('content', '')
         title = paper_data.get('title', '')
-        summary = paper_data.get('summary', '')
+        abstract = paper_data.get('abstract', '')
         
-        full_text = f"{title}\n{summary}\n{content}"
+        full_text = f"{title}\n{abstract}\n{content}"
         
         try:
-            keywords = self._extract_keywords(full_text)
-            contributions = self._extract_contributions(full_text)
-            datasets = self._extract_datasets(full_text)
             metrics = self._extract_metrics(full_text)
             author_info = self._extract_author_info(paper_data)
-            paper_type = self._analyze_paper_type(paper_data)
             research_area = self._extract_research_area(paper_data)
+            categories = paper_data.get('categories', [])
+            primary_category = paper_data.get('primary_category', '')
+            category_mapping = {
+                'cs.AI': 'Artificial Intelligence',
+                'cs.AR': 'Hardware Architecture',
+                'cs.CC': 'Computational Complexity',
+                'cs.CE': 'Computational Engineering, Finance, and Science',
+                'cs.CG': 'Computational Geometry',
+                'cs.CL': 'Computation and Language (NLP)',
+                'cs.CR': 'Cryptography and Security',
+                'cs.CV': 'Computer Vision and Pattern Recognition',
+                'cs.CY': 'Computers and Society',
+                'cs.DB': 'Databases',
+                'cs.DC': 'Distributed, Parallel, and Cluster Computing',
+                'cs.DL': 'Digital Libraries',
+                'cs.DM': 'Discrete Mathematics',
+                'cs.DS': 'Data Structures and Algorithms',
+                'cs.ET': 'Emerging Technologies',
+                'cs.FL': 'Formal Languages and Automata Theory',
+                'cs.GL': 'General Literature',
+                'cs.GR': 'Graphics',
+                'cs.GT': 'Computer Science and Game Theory',
+                'cs.HC': 'Human-Computer Interaction',
+                'cs.IR': 'Information Retrieval',
+                'cs.IT': 'Information Theory',
+                'cs.LG': 'Machine Learning',
+                'cs.LO': 'Logic in Computer Science',
+                'cs.MA': 'Multiagent Systems',
+                'cs.MM': 'Multimedia',
+                'cs.MS': 'Mathematical Software',
+                'cs.NA': 'Numerical Analysis (alias of math.NA)',
+                'cs.NE': 'Neural and Evolutionary Computing',
+                'cs.NI': 'Networking and Internet Architecture',
+                'cs.OH': 'Other Computer Science',
+                'cs.OS': 'Operating Systems',
+                'cs.PF': 'Performance',
+                'cs.PL': 'Programming Languages',
+                'cs.RO': 'Robotics',
+                'cs.SC': 'Symbolic Computation',
+                'cs.SD': 'Sound',
+                'cs.SE': 'Software Engineering',
+                'cs.SI': 'Social and Information Networks',
+                'cs.SY': 'Systems and Control (alias of eess.SY)',
+                'stat.ML': 'Machine Learning',
+            }
+            research_areas_all = []
+            for code in ([primary_category] if primary_category else []) + categories:
+                if code in category_mapping:
+                    name = category_mapping[code]
+                    if name not in research_areas_all:
+                        research_areas_all.append(name)
             
             word_count = len(full_text.split()) if full_text else 0
             
             enhanced_metadata = {
-                'keywords': keywords,
-                'contributions': contributions,
-                'datasets': datasets,
                 'metrics': metrics,
-                'paper_type': paper_type,
                 'research_area': research_area,
+                'research_areas_all': research_areas_all,
                 'word_count': word_count,
                 **author_info,
             }
             
-            logger.info(f"Extracted metadata: {len(keywords)} keywords, {len(contributions)} contributions, {len(datasets)} datasets")
+            logger.info(f"Extracted metadata: {len(metrics)} metrics")
             
             result = {**paper_data, **enhanced_metadata}
             return result

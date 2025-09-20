@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from src.config import get_settings
 from src.database import check_database_connection, create_tables
 from src.core import logger
-
+from src.models.paper import Paper
 settings = get_settings()
 
 @asynccontextmanager

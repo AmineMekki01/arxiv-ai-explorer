@@ -4,6 +4,7 @@ import asyncio
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -126,14 +127,14 @@ class ArxivClient:
             return {
                 'arxiv_id': arxiv_id,
                 'title': title,
-                'summary': summary,
+                'abstract': summary,
                 'authors': authors,
                 'categories': categories,
                 'primary_category': primary_category,
                 'published': published,
                 'updated': updated,
                 'pdf_url': pdf_url,
-                'abs_url': abs_url,
+                'arxiv_url': abs_url,
                 'doi': doi,
                 'journal_ref': journal_ref,
             }
@@ -174,6 +175,7 @@ class ArxivClient:
         try:
             xml_content = await self._make_request(params)
             papers = self._parse_atom_feed(xml_content)
+            logger.info(f"Found {len(papers)} papers for query: {query}")
             return papers
         except Exception as e:
             logger.error(f"Failed to search papers: {e}")
@@ -238,3 +240,90 @@ class ArxivClient:
             papers = filtered_papers
         
         return papers
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10)
+    )
+    async def download_pdf(
+        self, 
+        pdf_url: str, 
+        download_path: Path,
+        max_file_size_mb: int = 50
+    ) -> Path:
+        """
+        Download PDF from arXiv URL to local path.
+        
+        Args:
+            pdf_url: URL to PDF file
+            download_path: Local path to save PDF
+            max_file_size_mb: Maximum file size limit in MB
+            
+        Returns:
+            Path to downloaded PDF file
+            
+        Raises:
+            ValueError: If download fails or file is too large
+        """
+        await self._rate_limit()
+        
+        download_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        logger.info(f"Downloading PDF from: {pdf_url}")
+        
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
+            async with session.get(pdf_url) as response:
+                response.raise_for_status()
+                
+                content_length = response.headers.get('content-length')
+                if content_length:
+                    size_mb = int(content_length) / (1024 * 1024)
+                    if size_mb > max_file_size_mb:
+                        raise ValueError(f"PDF too large: {size_mb:.1f}MB > {max_file_size_mb}MB")
+                
+                downloaded_size = 0
+                max_size_bytes = max_file_size_mb * 1024 * 1024
+                
+                with open(download_path, 'wb') as f:
+                    async for chunk in response.content.iter_chunked(8192):
+                        downloaded_size += len(chunk)
+                        if downloaded_size > max_size_bytes:
+                            download_path.unlink(missing_ok=True)
+
+                            raise ValueError(f"PDF too large during download: {downloaded_size / (1024 * 1024):.1f}MB > {max_file_size_mb}MB")
+                        f.write(chunk)
+                
+                logger.info(f"Downloaded PDF ({downloaded_size / (1024 * 1024):.1f}MB) to: {download_path}")
+                return download_path
+
+    async def download_paper_pdf(
+        self,
+        arxiv_id: str,
+        download_dir: Path,
+        max_file_size_mb: int = 50
+    ) -> Optional[Path]:
+        """
+        Download PDF for a specific arXiv paper.
+        
+        Args:
+            arxiv_id: arXiv paper ID
+            download_dir: Directory to save PDF
+            max_file_size_mb: Maximum file size limit in MB
+            
+        Returns:
+            Path to downloaded PDF or None if failed
+        """
+        try:
+            paper = await self.get_paper_by_id(arxiv_id)
+            if not paper or not paper.get('pdf_url'):
+                logger.error(f"No PDF URL found for paper: {arxiv_id}")
+                return None
+            
+            clean_id = arxiv_id.replace('arXiv:', '').replace('/', '_')
+            pdf_path = download_dir / f"{clean_id}.pdf"
+            
+            return await self.download_pdf(paper['pdf_url'], pdf_path, max_file_size_mb)
+            
+        except Exception as e:
+            logger.error(f"Failed to download PDF for {arxiv_id}: {e}")
+            return None
