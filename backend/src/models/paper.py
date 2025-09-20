@@ -13,7 +13,8 @@ class Paper(Base):
     arxiv_id = Column(String(50), unique=True, index=True, nullable=False)
     arxiv_url = Column(String(500), nullable=False)
     pdf_url = Column(String(500), nullable=False)
-    
+    doi = Column(String(500), nullable=True)
+
     title = Column(Text, nullable=False, index=True)
     abstract = Column(Text, nullable=False)
     authors = Column(JSON, nullable=False)
@@ -21,17 +22,19 @@ class Paper(Base):
     published_date = Column(DateTime(timezone=True), nullable=False)
     updated_date = Column(DateTime(timezone=True), nullable=True)
     version = Column(Integer, default=1, nullable=False)
-    
+
     primary_category = Column(String(50), nullable=False, index=True)
     categories = Column(JSON, nullable=False)
     subjects = Column(JSON, nullable=True)
     
     full_text = Column(Text, nullable=True)
     key_concepts = Column(JSON, nullable=True)
-    methodology = Column(Text, nullable=True)
-    contributions = Column(JSON, nullable=True)
-    limitations = Column(JSON, nullable=True)
-    
+
+    metrics = Column(JSON, nullable=True)
+    word_count = Column(Integer, nullable=True)
+    reading_time = Column(Integer, nullable=True)
+    institutions = Column(JSON, nullable=True)
+       
     citation_count = Column(Integer, default=0, nullable=False)
     references = Column(JSON, nullable=True)
     cited_by = Column(JSON, nullable=True)
@@ -44,10 +47,6 @@ class Paper(Base):
     
     is_processed = Column(Boolean, default=False, nullable=False)
     is_embedded = Column(Boolean, default=False, nullable=False)
-    processing_errors = Column(JSON, nullable=True)
-    
-    local_pdf_path = Column(String(500), nullable=True)
-    local_text_path = Column(String(500), nullable=True)
     
     download_count = Column(Integer, default=0, nullable=False)
     last_accessed = Column(DateTime(timezone=True), nullable=True)

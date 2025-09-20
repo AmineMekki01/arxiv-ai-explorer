@@ -56,7 +56,7 @@ class EnsureCollectionOperator(BaseOperator):
         super().__init__(**kwargs)
         self.collection_name = collection_name or os.getenv("QDRANT_COLLECTION", "arxiv_chunks")
         self.vector_size = int(vector_size or os.getenv("EMBEDDING_DIM", "384"))
-        self.distance = (distance or os.getenv("QDRANT_DISTANCE", "Cosine")).capitalize()
+        self.distance = (distance or os.getenv("QDRANT_DISTANCE", "COSINE")).upper()
         self.payload_schema = payload_schema or {}
         self.hook_kwargs = hook_kwargs or {}
 
@@ -64,9 +64,9 @@ class EnsureCollectionOperator(BaseOperator):
         hook = QdrantHook(**self.hook_kwargs)
         client = hook.get_client()
 
-        if self.distance not in {"Cosine", "Euclid", "Dot"}:
-            self.log.warning("Unknown distance '%s', defaulting to Cosine", self.distance)
-            self.distance = "Cosine"
+        if self.distance not in {"COSINE", "EUCLID", "DOT"}:
+            self.log.warning("Unknown distance '%s', defaulting to COSINE", self.distance)
+            self.distance = "COSINE"
         distance_enum = getattr(qmodels, "Distance")[self.distance]
 
         collections = client.get_collections().collections
@@ -89,3 +89,78 @@ class EnsureCollectionOperator(BaseOperator):
             self.log.info("Qdrant collection '%s' already exists", self.collection_name)
 
         return self.collection_name
+
+
+class UpsertPointsOperator(BaseOperator):
+    """
+    Upsert vector points (chunks) into a Qdrant collection.
+    Expects input XCom payload: { 'papers': List[Dict], 'chunks': List[Dict] }
+    Each chunk must have 'vector' (list[float]) and will be written with payload metadata.
+    """
+
+    @apply_defaults
+    def __init__(
+        self,
+        input_task_id: str,
+        collection_name: Optional[str] = None,
+        batch_size: int = 256,
+        hook_kwargs: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.input_task_id = input_task_id
+        self.collection_name = collection_name or os.getenv("QDRANT_COLLECTION", "arxiv_chunks")
+        self.batch_size = batch_size
+        self.hook_kwargs = hook_kwargs or {}
+
+    def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        ti = context["ti"]
+        payload: Dict[str, Any] = ti.xcom_pull(task_ids=self.input_task_id) or {}
+        chunks = payload.get("chunks") or []
+
+        if not chunks:
+            self.log.warning("No chunks to upsert to Qdrant")
+            return {"upserted": 0}
+
+        hook = QdrantHook(**self.hook_kwargs)
+        client = hook.get_client()
+
+        upserted = 0
+        batch_vectors: list[list[float]] = []
+        batch_payloads: list[Dict[str, Any]] = []
+        batch_ids: list[str] = []
+
+        def flush_batch():
+            nonlocal upserted, batch_vectors, batch_payloads, batch_ids
+            if not batch_vectors:
+                return
+            points = [
+                qmodels.PointStruct(id=pid, vector=vec, payload=pay)
+                for pid, vec, pay in zip(batch_ids, batch_vectors, batch_payloads)
+            ]
+            client.upsert(collection_name=self.collection_name, points=points)
+            upserted += len(points)
+            batch_vectors = []
+            batch_payloads = []
+            batch_ids = []
+
+        for idx, ch in enumerate(chunks):
+            vec = ch.get("vector")
+            if not vec:
+                continue
+            import hashlib
+            content_id = f"{ch.get('arxiv_id','unknown')}_{ch.get('section_type','content')}_{ch.get('chunk_index',idx)}"
+            pid = int(hashlib.sha256(content_id.encode('utf-8')).hexdigest(), 16) % (2**63 - 1)
+            payload = {k: v for k, v in ch.items() if k not in {"vector"}}
+
+            batch_ids.append(pid)
+            batch_vectors.append(vec)
+            batch_payloads.append(payload)
+
+            if len(batch_vectors) >= self.batch_size:
+                flush_batch()
+
+        flush_batch()
+
+        self.log.info(f"Upserted {upserted} chunk vectors into Qdrant collection '{self.collection_name}'")
+        return {"upserted": upserted}

@@ -15,7 +15,15 @@ RUN pip install --no-cache-dir \
     arxiv==2.2.0 \
     PyPDF2==3.0.1 \
     PyMuPDF==1.26.4 \
-    psycopg2-binary \
-    pydantic \
-    pydantic-settings \
-    asyncpg
+    psycopg2-binary==2.9.9 \
+    pydantic==2.8.2 \
+    pydantic-settings==2.10.1 \
+    asyncpg==0.30.0 \
+    qdrant-client==1.15.1 \
+    sentence-transformers==5.1.0 \
+    pypdfium2==4.30.0 \
+    docling==2.53.0 \
+    langchain==0.3.27 \
+    langchain-experimental==0.3.4
+
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio

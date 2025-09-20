@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import os
 import sys
 
 import asyncio
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from airflow.models import BaseOperator
@@ -14,10 +14,15 @@ import sys
 sys.path.insert(0, "/opt/airflow")
 
 from src.services.arxiv.client import ArxivClient
-from src.services.arxiv.parser import PDFParser
 from src.services.arxiv.metadata_extractor import MetadataExtractor
 from src.database import get_sync_session
 from src.models.paper import Paper
+from src.config import get_settings
+from src.services.chunking.chunker import ChunkingConfig, PaperChunker
+
+from sentence_transformers import SentenceTransformer
+
+settings = get_settings()
 
 class FetchArxivOperator(BaseOperator):
     """
@@ -33,9 +38,8 @@ class FetchArxivOperator(BaseOperator):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        cats_env = os.getenv("ARXIV_CATEGORIES", "cs.AI,cs.CL,cs.LG")
-        self.categories = categories or [c.strip() for c in cats_env.split(",") if c.strip()]
-        self.max_results = int(max_results or os.getenv("ARXIV_MAX_RESULTS", "50"))
+        self.categories = categories or settings.arxiv_categories
+        self.max_results = int(max_results or settings.arxiv_max_results)
         self.since_days = since_days
 
     def execute(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -46,7 +50,7 @@ class FetchArxivOperator(BaseOperator):
                 category_papers = asyncio.run(
                     client.search_papers(
                         query=f"cat:{category}",
-                        max_results=self.max_results // len(self.categories),
+                        max_results=self.max_results,
                         sort_by="submittedDate",
                         sort_order="descending"
                     )
@@ -59,32 +63,88 @@ class FetchArxivOperator(BaseOperator):
 
 class ParsePDFOperator(BaseOperator):
     """
-    Parse PDF content using existing PDFParser service.
+    Download and parse PDF content using ArxivClient + Docling parser.
+    Expects input XCom: list[dict] with paper metadata including pdf_url.
+    Returns XCom: list[dict] with added 'content' field containing parsed text.
     """
     @apply_defaults
-    def __init__(self, input_task_id: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        input_task_id: str,
+        download_dir: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.input_task_id = input_task_id
+        self.download_dir = Path(download_dir or settings.papers_storage_path)
 
     def execute(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         ti = context["ti"]
         papers: List[Dict[str, Any]] = ti.xcom_pull(task_ids=self.input_task_id) or []
         
-        parser = PDFParser()
+        if not papers:
+            self.log.warning("No papers to parse")
+            return []
+
+        from src.services.arxiv.client import ArxivClient
+        from src.services.pdf_parser.factory import make_pdf_parser_service
+        
+        arxiv_client = ArxivClient()
+        pdf_parser = make_pdf_parser_service()
+        
+        parsed_papers = []
+        
         for paper in papers:
             try:
-                if paper.get("pdf_url"):
-                    content = asyncio.run(parser.parse_pdf(paper["pdf_url"]))
-                    paper["content"] = content.get("text", "")
-                    paper["sections"] = content.get("sections", [])
-                    paper["figures"] = content.get("figures", [])
-                    paper["tables"] = content.get("tables", [])
+                arxiv_id = paper.get('arxiv_id')
+                pdf_url = paper.get('pdf_url')
+                
+                if not arxiv_id or not pdf_url:
+                    self.log.warning(f"Skipping paper with missing arxiv_id or pdf_url: {paper}")
+                    parsed_papers.append(paper)
+                    continue
+                
+                self.log.info(f"Downloading PDF for {arxiv_id}")
+                pdf_path = asyncio.run(
+                    arxiv_client.download_pdf(
+                        pdf_url=pdf_url,
+                        download_path=self.download_dir / f"{arxiv_id.replace('/', '_')}.pdf",
+                        max_file_size_mb=settings.pdf_parser_max_file_size_mb
+                    )
+                )
+                
+                if not pdf_path or not pdf_path.exists():
+                    self.log.error(f"Failed to download PDF for {arxiv_id}")
+                    parsed_papers.append(paper)
+                    continue
+                
+                self.log.info(f"Parsing PDF for {arxiv_id}")
+                parsed_content = asyncio.run(pdf_parser.parse_pdf(pdf_path))
+                
+                if parsed_content:
+                    paper_with_content = {**paper}
+                    paper_with_content['content'] = parsed_content.raw_text
+                    paper_with_content['sections'] = [
+                        {'title': section.title, 'content': section.content}
+                        for section in parsed_content.sections
+                    ]
+                    paper_with_content['is_processed'] = True
+                    
+                    self.log.info(f"Successfully parsed {arxiv_id}: {len(parsed_content.raw_text)} characters")
+                    parsed_papers.append(paper_with_content)
+                else:
+                    self.log.warning(f"No content extracted from PDF for {arxiv_id}")
+                    parsed_papers.append(paper)
+                
+                pdf_path.unlink(missing_ok=True)
+                
             except Exception as e:
-                self.log.warning(f"Failed to parse PDF for {paper.get('arxiv_id')}: {e}")
-                paper["content"] = ""
-                paper["sections"] = []
+                self.log.error(f"Failed to process PDF for {paper.get('arxiv_id', 'unknown')}: {e}")
+                parsed_papers.append(paper)
+                continue
         
-        return papers
+        self.log.info(f"Processed {len(parsed_papers)} papers, {sum(1 for p in parsed_papers if p.get('content')) } successfully parsed")
+        return parsed_papers
 
 
 class ExtractMetadataOperator(BaseOperator):
@@ -142,10 +202,12 @@ class PersistDBOperator(BaseOperator):
         normalized: Dict[str, Any] = {}
         
         normalized["arxiv_id"] = data.get("arxiv_id")
-        normalized["arxiv_url"] = sanitize_text(data.get("abs_url") or data.get("arxiv_url")) or ""
+        normalized["arxiv_url"] = sanitize_text(data.get("arxiv_url")) or ""
         normalized["pdf_url"] = sanitize_text(data.get("pdf_url")) or ""
+        normalized["doi"] = sanitize_text(data.get("doi")) or ""
+        
         normalized["title"] = sanitize_text(data.get("title")) or "Untitled"
-        normalized["abstract"] = sanitize_text(data.get("abstract") or data.get("summary")) or ""
+        normalized["abstract"] = sanitize_text(data.get("abstract")) or ""
         normalized["authors"] = data.get("authors") or []
         normalized["published_date"] = to_dt(data.get("published")) or data.get("published_date") or datetime.now()
         normalized["updated_date"] = to_dt(data.get("updated")) or data.get("updated_date")
@@ -169,8 +231,7 @@ class PersistDBOperator(BaseOperator):
         normalized["full_text"] = sanitize_text(data.get("content") or data.get("full_text"))
         normalized["embedding_model"] = sanitize_text(data.get("embedding_model"))
         normalized["embedding_vector"] = sanitize_text(data.get("embedding_vector"))
-        normalized["local_pdf_path"] = sanitize_text(data.get("local_pdf_path"))
-        normalized["local_text_path"] = sanitize_text(data.get("local_text_path"))
+
         
         return {k: v for k, v in normalized.items() if v is not None}
 
@@ -251,3 +312,184 @@ class PersistDBOperator(BaseOperator):
         except Exception as e:
             self.log.error(f"Unexpected error in PersistDBOperator: {e}", exc_info=True)
             return {"persisted": 0, "skipped": 0, "error": str(e)}
+
+
+class ChunkDocumentsOperator(BaseOperator):
+    """This should our chunking Operator"""
+    @apply_defaults
+    def __init__(
+        self,
+        input_task_id: str,
+        max_tokens: int = 400,
+        overlap_tokens: int = 80,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.input_task_id = input_task_id
+        self.max_tokens = max_tokens
+        self.overlap_tokens = overlap_tokens
+
+    def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        ti = context["ti"]
+        papers: List[Dict[str, Any]] = ti.xcom_pull(task_ids=self.input_task_id) or []
+
+        if not papers:
+            self.log.warning("No papers provided to chunk")
+            return {"papers": [], "chunks": []}
+
+        try:
+            cfg = ChunkingConfig(max_tokens=int(self.max_tokens), overlap_tokens=int(self.overlap_tokens))
+            chunker = PaperChunker(cfg)
+        except Exception as e:
+            self.log.error(f"Failed to initialize PaperChunker: {e}")
+            chunker = PaperChunker()
+
+        all_chunks: List[Dict[str, Any]] = []
+        processed = 0
+        for p in papers:
+            try:
+                if not p.get("content"):
+                    self.log.info(f"Skipping paper {p.get('arxiv_id', 'unknown')} with no content")
+                    continue
+                chunks = chunker.chunk_paper(p)
+                all_chunks.extend(chunks)
+                processed += 1
+            except Exception as e:
+                self.log.warning(f"Chunking failed for {p.get('arxiv_id', 'unknown')}: {e}")
+                continue
+
+        self.log.info(f"Chunked {processed} papers into {len(all_chunks)} chunks (max_tokens={self.max_tokens}, overlap={self.overlap_tokens})")
+        return {"papers": papers, "chunks": all_chunks}
+
+class GenerateEmbeddingsOperator(BaseOperator):
+    """
+    Generate embeddings for chunks using SentenceTransformers.
+    Expects input XCom: { 'papers': List[Dict], 'chunks': List[Dict] }
+    Returns the same structure with 'vector' added to each chunk.
+    """
+    @apply_defaults
+    def __init__(
+        self,
+        input_task_id: str,
+        model_name: Optional[str] = None,
+        batch_size: int = 64,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.input_task_id = input_task_id
+        self.model_name = model_name or settings.embedding_model_local
+        self.batch_size = batch_size
+
+    def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        ti = context["ti"]
+        payload: Dict[str, Any] = ti.xcom_pull(task_ids=self.input_task_id) or {}
+        papers: List[Dict[str, Any]] = payload.get("papers") or []
+        chunks: List[Dict[str, Any]] = payload.get("chunks") or []
+
+        if not chunks:
+            self.log.warning("No chunks to embed")
+            return {"papers": papers, "chunks": []}
+
+        self.log.info(f"Loading embedding model: {self.model_name}")
+        model = SentenceTransformer(self.model_name)
+
+        texts = [c.get("chunk_text", "") for c in chunks]
+        self.log.info(f"Encoding {len(texts)} chunks with batch_size={self.batch_size}")
+        vectors = model.encode(texts, batch_size=self.batch_size, show_progress_bar=False, convert_to_numpy=True)
+
+        dim = vectors.shape[1] if hasattr(vectors, "shape") and len(vectors.shape) == 2 else None
+        self.log.info(f"Generated embeddings with dimension={dim}")
+
+        for i, vec in enumerate(vectors):
+            chunks[i]["vector"] = vec.tolist()
+            chunks[i]["embedding_model"] = self.model_name
+
+        return {"papers": papers, "chunks": chunks}
+
+
+class LoadPapersForEmbeddingOperator(BaseOperator):
+    """
+    Load papers from PostgreSQL that need embeddings (is_embedded=False) and have full_text.
+    Returns XCom: List[Dict[str, Any]] compatible with ChunkDocumentsOperator input.
+    """
+    @apply_defaults
+    def __init__(
+        self,
+        max_papers: int = 1,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.max_papers = max_papers
+
+    def execute(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not get_sync_session or not Paper:
+            self.log.error("Database not configured")
+            return []
+
+        results: List[Dict[str, Any]] = []
+        with get_sync_session() as session:
+            q = (
+                session.query(Paper)
+                .filter(Paper.is_embedded == False)
+                .filter(Paper.full_text.isnot(None))
+            )
+            papers = q.limit(self.max_papers).all()
+            for p in papers:
+                print(f"Processing paper {p.published_date}")
+                self.log.info(f"Processing paper {p.published_date}")
+                try:
+                    results.append({
+                        "arxiv_id": p.arxiv_id,
+                        "title": p.title,
+                        "authors": p.authors or [],
+                        "categories": p.categories or [],
+                        "primary_category": p.primary_category,
+                        "published_date": p.published_date if p.published_date else None,
+                        "content": p.full_text or "",
+                    })
+                except Exception as e:
+                    self.log.warning(f"Failed to map paper {getattr(p, 'arxiv_id', 'unknown')}: {e}")
+
+        self.log.info(f"Loaded {len(results)} papers for embedding")
+        return results
+
+
+class MarkPapersEmbeddedOperator(BaseOperator):
+    """
+    Mark provided arxiv_ids as embedded in PostgreSQL.
+    Expects input XCom to contain either a list of papers or a dict with 'papers'.
+    """
+    @apply_defaults
+    def __init__(self, input_task_id: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.input_task_id = input_task_id
+
+    def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        ti = context["ti"]
+        payload = ti.xcom_pull(task_ids=self.input_task_id) or []
+        if isinstance(payload, dict):
+            papers = payload.get("papers") or []
+        else:
+            papers = payload
+        arxiv_ids = {p.get("arxiv_id") for p in papers if p.get("arxiv_id")}
+
+        if not arxiv_ids:
+            self.log.info("No papers to mark as embedded")
+            return {"updated": 0}
+
+        updated = 0
+        with get_sync_session() as session:
+            try:
+                db_papers = session.query(Paper).filter(Paper.arxiv_id.in_(list(arxiv_ids))).all()
+                for dp in db_papers:
+                    dp.is_embedded = True
+                    dp.is_processed = True
+                session.commit()
+                updated = len(db_papers)
+            except Exception as e:
+                self.log.error(f"Failed to mark papers embedded: {e}")
+                session.rollback()
+                return {"updated": 0, "error": str(e)}
+
+        self.log.info(f"Marked {updated} papers as embedded")
+        return {"updated": updated}
