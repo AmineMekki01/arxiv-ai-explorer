@@ -229,6 +229,7 @@ class PersistDBOperator(BaseOperator):
         normalized["download_count"] = data.get("download_count", 0)
         
         normalized["full_text"] = sanitize_text(data.get("content") or data.get("full_text"))
+        normalized["sections"] = data.get("sections") or []
         normalized["embedding_model"] = sanitize_text(data.get("embedding_model"))
         normalized["embedding_vector"] = sanitize_text(data.get("embedding_vector"))
 
@@ -446,6 +447,7 @@ class LoadPapersForEmbeddingOperator(BaseOperator):
                         "primary_category": p.primary_category,
                         "published_date": p.published_date if p.published_date else None,
                         "content": p.full_text or "",
+                        "sections": p.sections or [],
                     })
                 except Exception as e:
                     self.log.warning(f"Failed to map paper {getattr(p, 'arxiv_id', 'unknown')}: {e}")
