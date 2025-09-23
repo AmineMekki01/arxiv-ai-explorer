@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     qdrant_distance: str = "COSINE"
     qdrant_top_k: int = 10
     
+    # OpenAI API
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5-mini"
+    openai_temperature: float = 0.1
+    
     # Embeddings
     embedding_dim: int = 384
     embedding_model_local: str = "all-MiniLM-L6-v2"

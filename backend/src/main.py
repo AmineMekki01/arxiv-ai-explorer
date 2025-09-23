@@ -1,4 +1,3 @@
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -9,6 +8,8 @@ from src.config import get_settings
 from src.database import check_database_connection, create_tables
 from src.core import logger
 from src.models.paper import Paper
+from src.routes.assistant import router as assistant_router
+
 settings = get_settings()
 
 @asynccontextmanager
@@ -47,6 +48,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(assistant_router)
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
