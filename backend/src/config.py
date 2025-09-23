@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
-from pydantic import Field, field_validator
+from typing import List
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,8 +43,12 @@ class Settings(BaseSettings):
     # Qdrant
     qdrant_host: str = "qdrant"
     qdrant_port: int = 6333
+    qdrant_collection: str = "arxiv_chunks"
+    qdrant_distance: str = "COSINE"
+    qdrant_top_k: int = 10
     
     # Embeddings
+    embedding_dim: int = 384
     embedding_model_local: str = "all-MiniLM-L6-v2"
     embedding_model_openai: str = "text-embedding-3-small"
 

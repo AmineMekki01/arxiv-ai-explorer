@@ -10,6 +10,9 @@ from airflow.utils.decorators import apply_defaults
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
+from src.config import get_settings
+
+settings = get_settings()
 
 class QdrantHook:
     """Simple hook to manage a Qdrant client based on environment variables."""
@@ -25,8 +28,8 @@ class QdrantHook:
             raise ImportError(
                 "qdrant-client is required. Please add it to your environment (pip install qdrant-client)."
             )
-        self.host = host or os.getenv("QDRANT_HOST", "qdrant")
-        self.port = int(port or os.getenv("QDRANT_PORT", "6333"))
+        self.host = host or settings.qdrant_host
+        self.port = int(port or settings.qdrant_port)
         self.timeout = timeout
         self.https = https
 
@@ -54,9 +57,9 @@ class EnsureCollectionOperator(BaseOperator):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.collection_name = collection_name or os.getenv("QDRANT_COLLECTION", "arxiv_chunks")
-        self.vector_size = int(vector_size or os.getenv("EMBEDDING_DIM", "384"))
-        self.distance = (distance or os.getenv("QDRANT_DISTANCE", "COSINE")).upper()
+        self.collection_name = collection_name or settings.qdrant_collection
+        self.vector_size = int(vector_size or settings.embedding_dim)
+        self.distance = (distance or settings.qdrant_distance).upper()
         self.payload_schema = payload_schema or {}
         self.hook_kwargs = hook_kwargs or {}
 
@@ -109,7 +112,7 @@ class UpsertPointsOperator(BaseOperator):
     ) -> None:
         super().__init__(**kwargs)
         self.input_task_id = input_task_id
-        self.collection_name = collection_name or os.getenv("QDRANT_COLLECTION", "arxiv_chunks")
+        self.collection_name = collection_name or settings.qdrant_collection
         self.batch_size = batch_size
         self.hook_kwargs = hook_kwargs or {}
 
