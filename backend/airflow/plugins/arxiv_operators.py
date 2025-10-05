@@ -209,8 +209,9 @@ class PersistDBOperator(BaseOperator):
         normalized["title"] = sanitize_text(data.get("title")) or "Untitled"
         normalized["abstract"] = sanitize_text(data.get("abstract")) or ""
         normalized["authors"] = data.get("authors") or []
-        normalized["published_date"] = to_dt(data.get("published")) or data.get("published_date") or datetime.now()
-        normalized["updated_date"] = to_dt(data.get("updated")) or data.get("updated_date")
+        normalized["affiliations"] = data.get("affiliations") or []
+        normalized["published_date"] = to_dt(data.get("published")) or datetime.now()
+        normalized["updated_date"] = to_dt(data.get("updated"))
         
         normalized["version"] = 1
         try:
@@ -228,7 +229,7 @@ class PersistDBOperator(BaseOperator):
         normalized["citation_count"] = data.get("citation_count", 0)
         normalized["download_count"] = data.get("download_count", 0)
         
-        normalized["full_text"] = sanitize_text(data.get("content") or data.get("full_text"))
+        normalized["full_text"] = sanitize_text(data.get("content"))
         normalized["sections"] = data.get("sections") or []
         normalized["embedding_model"] = sanitize_text(data.get("embedding_model"))
         normalized["embedding_vector"] = sanitize_text(data.get("embedding_vector"))

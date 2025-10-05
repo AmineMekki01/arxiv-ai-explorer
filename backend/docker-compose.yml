@@ -17,6 +17,7 @@ x-airflow-common:
     REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ARXIV_CATEGORIES: ${ARXIV_CATEGORIES:-cs.AI,cs.CL,cs.LG}
     ARXIV_MAX_RESULTS: ${ARXIV_MAX_RESULTS:-50}
+    OPENAI_API_KEY: ${OPENAI_API_KEY}
 
   volumes:
     - ./airflow/dags:/opt/airflow/dags
