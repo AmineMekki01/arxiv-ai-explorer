@@ -34,7 +34,7 @@ class Paper(Base):
     metrics = Column(JSON, nullable=True)
     word_count = Column(Integer, nullable=True)
     reading_time = Column(Integer, nullable=True)
-    institutions = Column(JSON, nullable=True)
+    affiliations = Column(JSON, nullable=True)
        
     citation_count = Column(Integer, default=0, nullable=False)
     references = Column(JSON, nullable=True)

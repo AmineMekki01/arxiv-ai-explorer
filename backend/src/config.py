@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-5-mini"
     openai_temperature: float = 0.1
+    openai_max_retries: int = 3
+    openai_timeout: int = 30
     
     # Embeddings
     embedding_dim: int = 384
@@ -72,6 +74,8 @@ class Settings(BaseSettings):
     pdf_parser_max_file_size_mb: int = 150
     pdf_parser_do_ocr: bool = False
     pdf_parser_do_table_structure: bool = True
+    
+    metadata_extractor_model: str = "gpt-5-nano"
 
     @field_validator('arxiv_categories', mode='before')
     def parse_arxiv_categories(cls, v):
