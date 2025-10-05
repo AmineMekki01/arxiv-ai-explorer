@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     embedding_dim: int = 384
     embedding_model_local: str = "all-MiniLM-L6-v2"
     embedding_model_openai: str = "text-embedding-3-small"
+    
+    # Context Management
+    context_strategy: str = "hybrid"
+    context_trim_threshold: int = 5
+    context_summary_threshold: int = 12
+    context_keep_last_n_turns: int = 4
+    context_max_turns: int = 8
+    context_summary_model: str = "gpt-5-mini"
+    context_summary_max_tokens: int = 400
+    conversations_storage_path: Path = Path("./data/conversations")
 
     # PDF parser
     pdf_parser_max_pages: int = 150
@@ -73,6 +83,7 @@ class Settings(BaseSettings):
         super().__init__(**kwargs)
         self.papers_storage_path.mkdir(parents=True, exist_ok=True)
         self.embedding_storage_path.mkdir(parents=True, exist_ok=True)
+        self.conversations_storage_path.mkdir(parents=True, exist_ok=True)
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
 @lru_cache()

@@ -6,6 +6,7 @@ airflow.cfg
 # Data directories
 data/
 plan.md
+node_modules/
 
 # Byte-compiled / optimized / DLL files
 
