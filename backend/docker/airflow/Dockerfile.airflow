@@ -24,6 +24,7 @@ RUN pip install --no-cache-dir \
     pypdfium2==4.30.0 \
     docling==2.53.0 \
     langchain==0.3.27 \
-    langchain-experimental==0.3.4
+    langchain-experimental==0.3.4 \
+    openai==1.107.1
 
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
