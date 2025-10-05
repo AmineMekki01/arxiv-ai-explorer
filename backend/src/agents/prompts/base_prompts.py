@@ -12,7 +12,7 @@ RESEARCH_ASSISTANT_PROMPT = """You are ResearchMind, an intelligent AI research 
 ## Your Tools:
 - `search_papers`: Search the vector database using semantic similarity. You can search by:
   - Research topics and keywords
-  - Author names and institutions
+  - Author names and affiliations
   - Specific methodologies or datasets
   - Paper titles or arXiv IDs
   - Include/exclude specific paper sections

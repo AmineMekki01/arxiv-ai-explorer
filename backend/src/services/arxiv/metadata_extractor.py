@@ -1,13 +1,104 @@
+"""Metadata extraction service for arXiv papers."""
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+import json
+from typing import Any, Dict, Optional
 
+from openai import OpenAI, OpenAIError
+
+from src.config import get_settings
 from src.core import logger
+
+
+AFFILIATION_PROMPT = """
+    Extract authors and affiliations from the following paper section.
+    Return ONLY valid JSON with this structure:
+
+    {{
+        "authors": [
+            
+                "Author Name 1",
+                "Author Name 2"
+        ],
+        "affiliations": [
+            
+                "Affiliation 1 of Author 1",
+                "Affiliation 2 of Author 2"
+        ]
+        
+    }}
+
+    Section:
+    {section}
+"""
+
+CATEGORY_MAPPING = {
+    'cs.AI': 'Artificial Intelligence',
+    'cs.AR': 'Hardware Architecture',
+    'cs.CC': 'Computational Complexity',
+    'cs.CE': 'Computational Engineering, Finance, and Science',
+    'cs.CG': 'Computational Geometry',
+    'cs.CL': 'Computation and Language (NLP)',
+    'cs.CR': 'Cryptography and Security',
+    'cs.CV': 'Computer Vision and Pattern Recognition',
+    'cs.CY': 'Computers and Society',
+    'cs.DB': 'Databases',
+    'cs.DC': 'Distributed, Parallel, and Cluster Computing',
+    'cs.DL': 'Digital Libraries',
+    'cs.DM': 'Discrete Mathematics',
+    'cs.DS': 'Data Structures and Algorithms',
+    'cs.ET': 'Emerging Technologies',
+    'cs.FL': 'Formal Languages and Automata Theory',
+    'cs.GL': 'General Literature',
+    'cs.GR': 'Graphics',
+    'cs.GT': 'Computer Science and Game Theory',
+    'cs.HC': 'Human-Computer Interaction',
+    'cs.IR': 'Information Retrieval',
+    'cs.IT': 'Information Theory',
+    'cs.LG': 'Machine Learning',
+    'cs.LO': 'Logic in Computer Science',
+    'cs.MA': 'Multiagent Systems',
+    'cs.MM': 'Multimedia',
+    'cs.MS': 'Mathematical Software',
+    'cs.NA': 'Numerical Analysis (alias of math.NA)',
+    'cs.NE': 'Neural and Evolutionary Computing',
+    'cs.NI': 'Networking and Internet Architecture',
+    'cs.OH': 'Other Computer Science',
+    'cs.OS': 'Operating Systems',
+    'cs.PF': 'Performance',
+    'cs.PL': 'Programming Languages',
+    'cs.RO': 'Robotics',
+    'cs.SC': 'Symbolic Computation',
+    'cs.SD': 'Sound',
+    'cs.SE': 'Software Engineering',
+    'cs.SI': 'Social and Information Networks',
+    'cs.SY': 'Systems and Control (alias of eess.SY)',
+    'stat.ML': 'Machine Learning',
+}
 
 
 class MetadataExtractor:
     """Extractor for enhanced metadata from arXiv papers."""
+    
+    def __init__(self):
+        """Initialize metadata extractor."""
+        self.settings = get_settings()
+        self._client: Optional[OpenAI] = None
+    
+    @property
+    def client(self) -> OpenAI:
+        """Lazy-load OpenAI client."""
+        if self._client is None:
+            if not self.settings.openai_api_key:
+                raise ValueError("OpenAI API key not configured in settings")
+            self._client = OpenAI(
+                api_key=self.settings.openai_api_key,
+                timeout=self.settings.openai_timeout,
+                max_retries=self.settings.openai_max_retries
+            )
+        return self._client
+    
     def _extract_metrics(self, text: str) -> Dict[str, float]:
         """Extract performance metrics and scores."""
         metrics = {}
@@ -65,104 +156,91 @@ class MetadataExtractor:
         
         return metrics
     
-    def _extract_author_info(self, paper_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract and enhance author information."""
-        authors = paper_data.get('authors', [])
-        if not authors:
-            return {}
-        
-        text = paper_data.get('content', '') or paper_data.get('abstract', '')
-
-        pre_abstract_text = text
-        m = re.search(r'(?i)\babstract\b', text)
-        if m:
-            pre_abstract_text = text[: m.start()]
-
-        if pre_abstract_text:
-            words = pre_abstract_text.split()
-            if len(words) > 1000:
-                pre_abstract_text = " ".join(words[:1000])
-        
-
-        institution_patterns = [
-            r'(?i)\b([A-Z][A-Za-z&\.\'-]+(?:\s+[A-Z][A-Za-z&\.\'-]+)*\s+University)\b',
-            r'(?i)\b([A-Z][A-Za-z&\.\'-]+(?:\s+[A-Z][A-Za-z&\.\'-]+)*\s+Institute(?:\s+of\s+Technology)?)\b',
-            r'(?i)\b([A-Z][A-Za-z&\.\'-]+(?:\s+[A-Z][A-Za-z&\.\'-]+)*\s+College)\b',
-            r'(?i)\b([A-Z][A-Za-z&\.\'-]+(?:\s+[A-Z][A-Za-z&\.\'-]+)*\s+Academy)\b',
-            r'(?i)\b((?:University|Institute(?:\s+of\s+Technology)?|College|Academy)\s+of\s+[A-Z][A-Za-z&\.\'-]+(?:\s+[A-Z][A-Za-z&\.\'-]+)*)\b',
-            r'(?i)\b([A-Za-z][A-Za-z\s,&\.\'-]*Affiliation(?:s)?)\b',
-            r'(?i)\b(MIT|Stanford|Harvard|Berkeley|CMU|Google|Microsoft|Facebook|OpenAI|DeepMind)\b',
-        ]
-        
-        institutions = set()
-        for pattern in institution_patterns:
-            matches = re.findall(pattern, pre_abstract_text)
-            institutions.update(matches)
-        
-        return {
-            'author_count': len(authors),
-            'authors': authors,
-            'institutions': list(institutions)[:5],
-        }
+    def _extract_author_institution_info(self, paper_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract authors and affiliations using OpenAI."""
+        try:
+            sections = paper_data.get('sections', [])
+            if not sections:
+                logger.warning("No sections found in paper data")
+                return {'author_count': 0, 'authors': [], 'affiliations': []}
+            
+            abstract_index = None
+            for i, section in enumerate(sections):
+                if 'abstract' in section.get('title', '').lower():
+                    abstract_index = i
+                    break
+            
+            sections_to_use = sections[:abstract_index] if abstract_index else sections[:3]
+            
+            if not sections_to_use:
+                logger.warning("No sections available for extraction")
+                return {'author_count': 0, 'authors': [], 'affiliations': []}
+            
+            content = "\n".join(
+                f"{s.get('title', '')}\n{s.get('content', '')}" 
+                for s in sections_to_use
+            )
+            
+            title = paper_data.get('title', '')
+            if title:
+                title_match = re.search(rf'(?i)\b{re.escape(title)}\b', content)
+                if title_match:
+                    content = content[title_match.end():]
+            
+            response = self.client.chat.completions.create(
+                model=self.settings.metadata_extractor_model,
+                messages=[
+                    {"role": "system", "content": AFFILIATION_PROMPT.format(section=content)},
+                    {"role": "user", "content": content}
+                ]
+            )
+            
+            response_text = response.choices[0].message.content
+            data = json.loads(response_text)
+            
+            authors = data.get('authors', [])
+            affiliations = data.get('affiliations', [])
+            
+            return {
+                'author_count': len(authors),
+                'authors': authors,
+                'affiliations': affiliations
+            }
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON from OpenAI response: {e}")
+            return {'author_count': 0, 'authors': [], 'affiliations': []}
+        except OpenAIError as e:
+            logger.error(f"OpenAI API error during affiliation extraction: {e}")
+            return {'author_count': 0, 'authors': [], 'affiliations': []}
+        except Exception as e:
+            logger.error(f"Unexpected error in affiliation extraction: {e}")
+            return {'author_count': 0, 'authors': [], 'affiliations': []}
 
     
     def _extract_research_area(self, paper_data: Dict[str, Any]) -> str:
-        """Determine the primary research area."""
+        """Determine the primary research area from categories."""
         categories = paper_data.get('categories', [])
         primary_category = paper_data.get('primary_category', '')
         
-        category_mapping = {
-            'cs.AI': 'Artificial Intelligence',
-            'cs.AR': 'Hardware Architecture',
-            'cs.CC': 'Computational Complexity',
-            'cs.CE': 'Computational Engineering, Finance, and Science',
-            'cs.CG': 'Computational Geometry',
-            'cs.CL': 'Computation and Language (NLP)',
-            'cs.CR': 'Cryptography and Security',
-            'cs.CV': 'Computer Vision and Pattern Recognition',
-            'cs.CY': 'Computers and Society',
-            'cs.DB': 'Databases',
-            'cs.DC': 'Distributed, Parallel, and Cluster Computing',
-            'cs.DL': 'Digital Libraries',
-            'cs.DM': 'Discrete Mathematics',
-            'cs.DS': 'Data Structures and Algorithms',
-            'cs.ET': 'Emerging Technologies',
-            'cs.FL': 'Formal Languages and Automata Theory',
-            'cs.GL': 'General Literature',
-            'cs.GR': 'Graphics',
-            'cs.GT': 'Computer Science and Game Theory',
-            'cs.HC': 'Human-Computer Interaction',
-            'cs.IR': 'Information Retrieval',
-            'cs.IT': 'Information Theory',
-            'cs.LG': 'Machine Learning',
-            'cs.LO': 'Logic in Computer Science',
-            'cs.MA': 'Multiagent Systems',
-            'cs.MM': 'Multimedia',
-            'cs.MS': 'Mathematical Software',
-            'cs.NA': 'Numerical Analysis (alias of math.NA)',
-            'cs.NE': 'Neural and Evolutionary Computing',
-            'cs.NI': 'Networking and Internet Architecture',
-            'cs.OH': 'Other Computer Science',
-            'cs.OS': 'Operating Systems',
-            'cs.PF': 'Performance',
-            'cs.PL': 'Programming Languages',
-            'cs.RO': 'Robotics',
-            'cs.SC': 'Symbolic Computation',
-            'cs.SD': 'Sound',
-            'cs.SE': 'Software Engineering',
-            'cs.SI': 'Social and Information Networks',
-            'cs.SY': 'Systems and Control (alias of eess.SY)',
-            'stat.ML': 'Machine Learning',
-        }
-        
-        if primary_category in category_mapping:
-            return category_mapping[primary_category]
+        if primary_category in CATEGORY_MAPPING:
+            return CATEGORY_MAPPING[primary_category]
         
         for cat in categories:
-            if cat in category_mapping:
-                return category_mapping[cat]
+            if cat in CATEGORY_MAPPING:
+                return CATEGORY_MAPPING[cat]
         
         return 'Computer Science'
+    
+
+    def _get_full_text(self, paper_data: Dict[str, Any]) -> str:
+        """Get full text from paper data."""
+        all_sections = paper_data.get('sections', [])
+        full_text = "\n".join(
+            f"{section.get('title', '')}\n{section.get('content', '')}"
+            for section in all_sections
+        )
+        return full_text
     
     async def extract_metadata(self, paper_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -176,65 +254,19 @@ class MetadataExtractor:
         """
         logger.info(f"Extracting metadata for paper: {paper_data.get('arxiv_id', 'unknown')}")
         
-        content = paper_data.get('content', '')
-        title = paper_data.get('title', '')
-        abstract = paper_data.get('abstract', '')
-        
-        full_text = f"{title}\n{abstract}\n{content}"
-        
+        full_text = self._get_full_text(paper_data)
         try:
             metrics = self._extract_metrics(full_text)
-            author_info = self._extract_author_info(paper_data)
+            author_info = self._extract_author_institution_info(paper_data)
             research_area = self._extract_research_area(paper_data)
+            
             categories = paper_data.get('categories', [])
             primary_category = paper_data.get('primary_category', '')
-            category_mapping = {
-                'cs.AI': 'Artificial Intelligence',
-                'cs.AR': 'Hardware Architecture',
-                'cs.CC': 'Computational Complexity',
-                'cs.CE': 'Computational Engineering, Finance, and Science',
-                'cs.CG': 'Computational Geometry',
-                'cs.CL': 'Computation and Language (NLP)',
-                'cs.CR': 'Cryptography and Security',
-                'cs.CV': 'Computer Vision and Pattern Recognition',
-                'cs.CY': 'Computers and Society',
-                'cs.DB': 'Databases',
-                'cs.DC': 'Distributed, Parallel, and Cluster Computing',
-                'cs.DL': 'Digital Libraries',
-                'cs.DM': 'Discrete Mathematics',
-                'cs.DS': 'Data Structures and Algorithms',
-                'cs.ET': 'Emerging Technologies',
-                'cs.FL': 'Formal Languages and Automata Theory',
-                'cs.GL': 'General Literature',
-                'cs.GR': 'Graphics',
-                'cs.GT': 'Computer Science and Game Theory',
-                'cs.HC': 'Human-Computer Interaction',
-                'cs.IR': 'Information Retrieval',
-                'cs.IT': 'Information Theory',
-                'cs.LG': 'Machine Learning',
-                'cs.LO': 'Logic in Computer Science',
-                'cs.MA': 'Multiagent Systems',
-                'cs.MM': 'Multimedia',
-                'cs.MS': 'Mathematical Software',
-                'cs.NA': 'Numerical Analysis (alias of math.NA)',
-                'cs.NE': 'Neural and Evolutionary Computing',
-                'cs.NI': 'Networking and Internet Architecture',
-                'cs.OH': 'Other Computer Science',
-                'cs.OS': 'Operating Systems',
-                'cs.PF': 'Performance',
-                'cs.PL': 'Programming Languages',
-                'cs.RO': 'Robotics',
-                'cs.SC': 'Symbolic Computation',
-                'cs.SD': 'Sound',
-                'cs.SE': 'Software Engineering',
-                'cs.SI': 'Social and Information Networks',
-                'cs.SY': 'Systems and Control (alias of eess.SY)',
-                'stat.ML': 'Machine Learning',
-            }
+            
             research_areas_all = []
             for code in ([primary_category] if primary_category else []) + categories:
-                if code in category_mapping:
-                    name = category_mapping[code]
+                if code in CATEGORY_MAPPING:
+                    name = CATEGORY_MAPPING[code]
                     if name not in research_areas_all:
                         research_areas_all.append(name)
             
@@ -248,7 +280,7 @@ class MetadataExtractor:
                 **author_info,
             }
             
-            logger.info(f"Extracted metadata: {len(metrics)} metrics")
+            logger.info(f"Extracted metadata: {len(metrics)} metrics, {len(author_info.get('authors', []))} authors")
             
             result = {**paper_data, **enhanced_metadata}
             return result
