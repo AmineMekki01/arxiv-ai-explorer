@@ -1,7 +1,9 @@
 # Airflow runtime files (generated in airflow/ folder)
 airflow/logs/
 airflow/plugins/
-
+backend/notebooks/notebook_setup.py
+archive/
+logs/
 airflow.cfg
 # Data directories
 data/

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 from typing import Any, Dict, Optional
 
 from airflow.models import BaseOperator
@@ -44,7 +42,6 @@ class QdrantHook:
 
 
 class EnsureCollectionOperator(BaseOperator):
-    """Ensure a Qdrant collection exists with the specified parameters."""
 
     @apply_defaults
     def __init__(
@@ -75,19 +72,26 @@ class EnsureCollectionOperator(BaseOperator):
         collections = client.get_collections().collections
         existing = any(c.name == self.collection_name for c in collections)
         if not existing:
-            self.log.info(
-                "Creating Qdrant collection '%s' (size=%s, distance=%s)",
-                self.collection_name,
-                self.vector_size,
-                self.distance,
-            )
+            from src.services.embeddings import MultiVectorEmbedder
+            embedder = MultiVectorEmbedder()
+            dims = embedder.get_embedding_dimensions()
+            
             client.create_collection(
                 collection_name=self.collection_name,
-                vectors_config=qmodels.VectorParams(
-                    size=self.vector_size,
-                    distance=distance_enum,
-                ),
+                vectors_config={
+                    "all-MiniLM-L6-v2": qmodels.VectorParams(
+                        size=dims["dense_dim"],
+                        distance=distance_enum,
+                    ),
+                },
+                sparse_vectors_config={
+                    "bm25": qmodels.SparseVectorParams(
+                        modifier=qmodels.Modifier.IDF
+                    )
+                }
             )
+            self.log.info("Hybrid search collection created successfully (dense + sparse BM25)")
+        
         else:
             self.log.info("Qdrant collection '%s' already exists", self.collection_name)
 
@@ -98,7 +102,7 @@ class UpsertPointsOperator(BaseOperator):
     """
     Upsert vector points (chunks) into a Qdrant collection.
     Expects input XCom payload: { 'papers': List[Dict], 'chunks': List[Dict] }
-    Each chunk must have 'vector' (list[float]) and will be written with payload metadata.
+    Each chunk must have 'vectors' (dict) with 'dense', 'sparse' for multi-vector mode
     """
 
     @apply_defaults
@@ -129,41 +133,40 @@ class UpsertPointsOperator(BaseOperator):
         client = hook.get_client()
 
         upserted = 0
-        batch_vectors: list[list[float]] = []
-        batch_payloads: list[Dict[str, Any]] = []
-        batch_ids: list[str] = []
+        batch_points: list[qmodels.PointStruct] = []
 
         def flush_batch():
-            nonlocal upserted, batch_vectors, batch_payloads, batch_ids
-            if not batch_vectors:
+            nonlocal upserted, batch_points
+            if not batch_points:
                 return
-            points = [
-                qmodels.PointStruct(id=pid, vector=vec, payload=pay)
-                for pid, vec, pay in zip(batch_ids, batch_vectors, batch_payloads)
-            ]
-            client.upsert(collection_name=self.collection_name, points=points)
-            upserted += len(points)
-            batch_vectors = []
-            batch_payloads = []
-            batch_ids = []
+            client.upsert(collection_name=self.collection_name, points=batch_points)
+            upserted += len(batch_points)
+            batch_points = []
 
         for idx, ch in enumerate(chunks):
-            vec = ch.get("vector")
-            if not vec:
+            vectors = ch.get("vectors")
+            if not vectors:
                 continue
+                
             import hashlib
             content_id = f"{ch.get('arxiv_id','unknown')}_{ch.get('section_type','content')}_{ch.get('chunk_index',idx)}"
             pid = int(hashlib.sha256(content_id.encode('utf-8')).hexdigest(), 16) % (2**63 - 1)
-            payload = {k: v for k, v in ch.items() if k not in {"vector"}}
+            
+            payload_data = {k: v for k, v in ch.items() if k not in {"vectors", "vector"}}
+            
+            point = qmodels.PointStruct(
+                id=pid,
+                vector={
+                    "all-MiniLM-L6-v2": vectors["dense"],
+                    "bm25": vectors["sparse"],
+                },
+                payload=payload_data
+            )
+            batch_points.append(point)
 
-            batch_ids.append(pid)
-            batch_vectors.append(vec)
-            batch_payloads.append(payload)
-
-            if len(batch_vectors) >= self.batch_size:
+            if len(batch_points) >= self.batch_size:
                 flush_batch()
 
         flush_batch()
-
-        self.log.info(f"Upserted {upserted} chunk vectors into Qdrant collection '{self.collection_name}'")
+        self.log.info(f"Upserted {upserted} multi-vector chunks into Qdrant collection '{self.collection_name}'")
         return {"upserted": upserted}
