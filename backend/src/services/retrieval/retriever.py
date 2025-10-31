@@ -6,7 +6,7 @@ from src.config import get_settings
 from src.database import get_sync_session
 
 from qdrant_client import QdrantClient
-from sentence_transformers import SentenceTransformer
+from src.services.embeddings.multi_vector_embedder import MultiVectorEmbedder
 
 settings = get_settings()
 
@@ -16,13 +16,14 @@ class Retriever:
         self._db_session_ctx = get_sync_session
 
         self._qdrant = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
-        self._st_model = SentenceTransformer(settings.embedding_model_local)
+        self._embedder = MultiVectorEmbedder()
 
 
     def vector_search(self, query: str, limit: int = 10, include_sections: Optional[List[str]] = None, exclude_sections: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """Vector similarity search over chunk collection in Qdrant, returns chunk-level results."""
+        """Hybrid search using both dense and sparse embeddings with rank fusion."""
         from qdrant_client.http import models as qmodels
-        print(f"Tool Called with Vector search: {query} | Limit: {limit} | Include Sections: {include_sections} | Exclude Sections: {exclude_sections}")
+        print(f"Tool Called with Hybrid search: {query} | Limit: {limit} | Include Sections: {include_sections} | Exclude Sections: {exclude_sections}")
+        
         filters = None
         if include_sections:
             filters = qmodels.Filter(
@@ -39,21 +40,37 @@ class Retriever:
                 )]
             )
 
-        q_vec = self._st_model.encode([query])[0].tolist()
-        res = self._qdrant.search(
-            collection_name=settings.qdrant_collection,
-            query_vector=q_vec,
-            limit=limit,
-            with_vectors=False,
-            with_payload=True,
-            search_params=qmodels.SearchParams(
-                hnsw_ef=None,
-                exact=False,
+        query_embeddings = self._embedder.embed_query(query)
+        dense_vector = query_embeddings["dense"].tolist()
+        sparse_vector = query_embeddings["sparse"].as_object()
+        
+        prefetch_dense = qmodels.Prefetch(
+            query=dense_vector,
+            using="all-MiniLM-L6-v2",
+            limit=limit * 2,
+        )
+        
+        prefetch_sparse = qmodels.Prefetch(
+            query=qmodels.SparseVector(
+                indices=sparse_vector["indices"],
+                values=sparse_vector["values"]
             ),
+            using="bm25",
+            limit=limit * 2,
+        )
+        
+        res = self._qdrant.query_points(
+            collection_name=settings.qdrant_collection,
+            prefetch=[prefetch_dense, prefetch_sparse],
+            query=qmodels.FusionQuery(fusion=qmodels.Fusion.RRF),
+            limit=limit,
+            with_payload=True,
             query_filter=filters,
         )
+        
         results: List[Dict[str, Any]] = []
-        for pt in res:
+        points = res.points if hasattr(res, 'points') else res
+        for pt in points:
             pay = pt.payload or {}
             results.append(
                 {
@@ -68,7 +85,7 @@ class Retriever:
                     "categories": pay.get("categories", []),
                     "published_date": pay.get("published_date"),
                     "score": float(pt.score) if pt.score is not None else None,
-                    "source": "vector",
+                    "source": "hybrid",
                 }
             )
         return results

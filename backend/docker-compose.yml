@@ -49,9 +49,9 @@ services:
       POSTGRES_MULTIPLE_USERS: researchmind,airflow
       POSTGRES_MULTIPLE_PASSWORDS: password,airflow
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
       - ./docker/postgres/init-multiple-databases.sh:/docker-entrypoint-initdb.d/01-init-multiple-databases.sh
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/02-init.sql
     healthcheck:

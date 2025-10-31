@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import sys
-
 import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
 
-import sys
 sys.path.insert(0, "/opt/airflow")
 
 from src.services.arxiv.client import ArxivClient
@@ -119,18 +118,27 @@ class ParsePDFOperator(BaseOperator):
                     continue
                 
                 self.log.info(f"Parsing PDF for {arxiv_id}")
-                parsed_content = asyncio.run(pdf_parser.parse_pdf(pdf_path))
+                docling_doc = asyncio.run(pdf_parser.parse_pdf(pdf_path))
                 
-                if parsed_content:
+                if docling_doc:
+                    from src.services.pdf_parser.docling_utils import (
+                        serialize_docling_document,
+                        extract_full_text,
+                        get_document_metadata
+                    )
+                    
                     paper_with_content = {**paper}
-                    paper_with_content['content'] = parsed_content.raw_text
-                    paper_with_content['sections'] = [
-                        {'title': section.title, 'content': section.content}
-                        for section in parsed_content.sections
-                    ]
+                    paper_with_content['docling_document'] = serialize_docling_document(docling_doc)
+                    paper_with_content['_temp_full_text'] = extract_full_text(docling_doc)
                     paper_with_content['is_processed'] = True
                     
-                    self.log.info(f"Successfully parsed {arxiv_id}: {len(parsed_content.raw_text)} characters")
+                    doc_meta = get_document_metadata(docling_doc)
+                    self.log.info(
+                        f"Successfully parsed {arxiv_id}: "
+                        f"{doc_meta.get('text_count', 0)} text elements, "
+                        f"{doc_meta.get('table_count', 0)} tables, "
+                        f"{doc_meta.get('picture_count', 0)} pictures"
+                    )
                     parsed_papers.append(paper_with_content)
                 else:
                     self.log.warning(f"No content extracted from PDF for {arxiv_id}")
@@ -143,7 +151,7 @@ class ParsePDFOperator(BaseOperator):
                 parsed_papers.append(paper)
                 continue
         
-        self.log.info(f"Processed {len(parsed_papers)} papers, {sum(1 for p in parsed_papers if p.get('content')) } successfully parsed")
+        self.log.info(f"Processed {len(parsed_papers)} papers, {sum(1 for p in parsed_papers if p.get('docling_document')) } successfully parsed")
         return parsed_papers
 
 
@@ -163,8 +171,26 @@ class ExtractMetadataOperator(BaseOperator):
         extractor = MetadataExtractor()
         for paper in papers:
             try:
+                if paper.get('docling_document'):
+                    from src.services.pdf_parser.docling_utils import (
+                        deserialize_docling_document,
+                        extract_sections_from_docling,
+                        extract_full_text
+                    )
+                    
+                    doc = deserialize_docling_document(paper['docling_document'])
+                    
+                    if not paper.get('_temp_full_text'):
+                        paper['_temp_full_text'] = extract_full_text(doc)
+                    
+                    paper['content'] = paper['_temp_full_text']
+                
                 metadata = asyncio.run(extractor.extract_metadata(paper))
                 paper.update(metadata)
+                
+                paper.pop('_temp_full_text', None)
+                paper.pop('content', None)
+                
             except Exception as e:
                 self.log.warning(f"Failed to extract metadata for {paper.get('arxiv_id')}: {e}")
     
@@ -229,10 +255,12 @@ class PersistDBOperator(BaseOperator):
         normalized["citation_count"] = data.get("citation_count", 0)
         normalized["download_count"] = data.get("download_count", 0)
         
-        normalized["full_text"] = sanitize_text(data.get("content"))
-        normalized["sections"] = data.get("sections") or []
+        normalized["docling_document"] = data.get("docling_document")
         normalized["embedding_model"] = sanitize_text(data.get("embedding_model"))
         normalized["embedding_vector"] = sanitize_text(data.get("embedding_vector"))
+        
+        normalized["word_count"] = data.get("word_count")
+        normalized["metrics"] = data.get("metrics")
 
         
         return {k: v for k, v in normalized.items() if v is not None}
@@ -317,19 +345,17 @@ class PersistDBOperator(BaseOperator):
 
 
 class ChunkDocumentsOperator(BaseOperator):
-    """This should our chunking Operator"""
+    """Chunk documents using Docling's HybridChunker on DoclingDocument objects."""
     @apply_defaults
     def __init__(
         self,
         input_task_id: str,
-        max_tokens: int = 400,
-        overlap_tokens: int = 80,
+        max_tokens: int = 1000,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.input_task_id = input_task_id
         self.max_tokens = max_tokens
-        self.overlap_tokens = overlap_tokens
 
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         ti = context["ti"]
@@ -340,7 +366,7 @@ class ChunkDocumentsOperator(BaseOperator):
             return {"papers": [], "chunks": []}
 
         try:
-            cfg = ChunkingConfig(max_tokens=int(self.max_tokens), overlap_tokens=int(self.overlap_tokens))
+            cfg = ChunkingConfig(max_tokens=int(self.max_tokens))
             chunker = PaperChunker(cfg)
         except Exception as e:
             self.log.error(f"Failed to initialize PaperChunker: {e}")
@@ -348,26 +374,54 @@ class ChunkDocumentsOperator(BaseOperator):
 
         all_chunks: List[Dict[str, Any]] = []
         processed = 0
+        
+        from src.services.pdf_parser.docling_utils import deserialize_docling_document
+        
         for p in papers:
             try:
-                if not p.get("content"):
-                    self.log.info(f"Skipping paper {p.get('arxiv_id', 'unknown')} with no content")
+                arxiv_id = p.get('arxiv_id', 'unknown')
+                
+                if not p.get("docling_document"):
+                    self.log.info(f"Skipping paper {arxiv_id} with no docling_document")
                     continue
-                chunks = chunker.chunk_paper(p)
-                all_chunks.extend(chunks)
+                
+                doc = deserialize_docling_document(p["docling_document"])
+                
+                chunks = chunker.chunk_paper(doc)
+                
+                for idx, chunk in enumerate(chunks):           
+                    chunk_dict = {
+                        "arxiv_id": arxiv_id,
+                        "title": p.get("title", ""),
+                        "primary_category": p.get("primary_category", ""),
+                        "categories": p.get("categories", []),
+                        "published_date": p.get("published_date"),
+                        "authors": p.get("authors", []),
+                        "chunk_index": idx,
+                        "chunk_text": chunk.text if hasattr(chunk, 'text') else str(chunk)
+                    }
+                    all_chunks.append(chunk_dict)
+                
                 processed += 1
+                self.log.info(f"Chunked {arxiv_id} into {len(chunks)} chunks")
+                
             except Exception as e:
-                self.log.warning(f"Chunking failed for {p.get('arxiv_id', 'unknown')}: {e}")
+                self.log.warning(f"Chunking failed for {p.get('arxiv_id', 'unknown')}: {e}", exc_info=True)
                 continue
 
-        self.log.info(f"Chunked {processed} papers into {len(all_chunks)} chunks (max_tokens={self.max_tokens}, overlap={self.overlap_tokens})")
-        return {"papers": papers, "chunks": all_chunks}
+        self.log.info(f"Chunked {processed} papers into {len(all_chunks)} chunks (max_tokens={self.max_tokens})")
+        
+        return {
+            "papers": papers,
+            "chunks": all_chunks
+        }
 
 class GenerateEmbeddingsOperator(BaseOperator):
     """
-    Generate embeddings for chunks using SentenceTransformers.
+    Generate embeddings for chunks.
+    Supports both single-vector (SentenceTransformers) and multi-vector (fastembed) modes.
     Expects input XCom: { 'papers': List[Dict], 'chunks': List[Dict] }
-    Returns the same structure with 'vector' added to each chunk.
+    Returns the same structure with 'vector' or 'vectors' added to each chunk.
     """
     @apply_defaults
     def __init__(
@@ -375,12 +429,14 @@ class GenerateEmbeddingsOperator(BaseOperator):
         input_task_id: str,
         model_name: Optional[str] = None,
         batch_size: int = 64,
+        use_multi_vector: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.input_task_id = input_task_id
         self.model_name = model_name or settings.embedding_model_local
         self.batch_size = batch_size
+        self.use_multi_vector = use_multi_vector
 
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         ti = context["ti"]
@@ -392,21 +448,58 @@ class GenerateEmbeddingsOperator(BaseOperator):
             self.log.warning("No chunks to embed")
             return {"papers": papers, "chunks": []}
 
-        self.log.info(f"Loading embedding model: {self.model_name}")
-        model = SentenceTransformer(self.model_name)
+        valid_chunks = []
+        valid_texts = []
+        for chunk in chunks:
+            text = chunk.get("chunk_text", "")
+            if text and isinstance(text, str) and len(text.strip()) > 0:
+                valid_chunks.append(chunk)
+                valid_texts.append(text.strip())
+            else:
+                self.log.warning(f"Skipping empty chunk: {chunk.get('arxiv_id', 'unknown')}")
+        
+        if not valid_chunks:
+            self.log.warning("No valid chunks to embed after filtering")
+            return {"papers": papers, "chunks": []}
+        
+        self.log.info(f"Embedding {len(valid_chunks)} valid chunks (filtered out {len(chunks) - len(valid_chunks)} empty chunks)")
+        
+        if self.use_multi_vector:
+            self.log.info("Generating hybrid embeddings (dense + sparse BM25)")
+            from src.services.embeddings import MultiVectorEmbedder
+            
+            embedder = MultiVectorEmbedder()
+            dense_embs, sparse_embs = embedder.embed_documents(valid_texts)
+            
+            self.log.info(f"Generated {len(dense_embs)} sets of hybrid embeddings")
+            
+            for i, (dense, sparse) in enumerate(zip(dense_embs, sparse_embs)):
+                sparse_dict = sparse.as_object()
+                
+                valid_chunks[i]["vectors"] = {
+                    "dense": dense,
+                    "sparse": sparse_dict,
+                }
+                valid_chunks[i]["embedding_model"] = "hybrid (dense + BM25)"
+        else:
+            self.log.info(f"Loading single embedding model: {self.model_name}")
+            model = SentenceTransformer(self.model_name)
+            
+            self.log.info(f"Encoding {len(valid_texts)} chunks with batch_size={self.batch_size}")
+            vectors = model.encode(valid_texts, batch_size=self.batch_size, show_progress_bar=False, convert_to_numpy=True)
+            
+            dim = vectors.shape[1] if hasattr(vectors, "shape") and len(vectors.shape) == 2 else None
+            self.log.info(f"Generated embeddings with dimension={dim}")
+            
+            for i, vec in enumerate(vectors):
+                valid_chunks[i]["vector"] = vec
+                valid_chunks[i]["embedding_model"] = self.model_name
 
-        texts = [c.get("chunk_text", "") for c in chunks]
-        self.log.info(f"Encoding {len(texts)} chunks with batch_size={self.batch_size}")
-        vectors = model.encode(texts, batch_size=self.batch_size, show_progress_bar=False, convert_to_numpy=True)
-
-        dim = vectors.shape[1] if hasattr(vectors, "shape") and len(vectors.shape) == 2 else None
-        self.log.info(f"Generated embeddings with dimension={dim}")
-
-        for i, vec in enumerate(vectors):
-            chunks[i]["vector"] = vec.tolist()
-            chunks[i]["embedding_model"] = self.model_name
-
-        return {"papers": papers, "chunks": chunks}
+        result = {
+            "papers": papers,
+            "chunks": valid_chunks
+        }
+        return result
 
 
 class LoadPapersForEmbeddingOperator(BaseOperator):
@@ -433,12 +526,11 @@ class LoadPapersForEmbeddingOperator(BaseOperator):
             q = (
                 session.query(Paper)
                 .filter(Paper.is_embedded == False)
-                .filter(Paper.full_text.isnot(None))
+                .filter(Paper.docling_document.isnot(None))
             )
             papers = q.limit(self.max_papers).all()
             for p in papers:
-                print(f"Processing paper {p.published_date}")
-                self.log.info(f"Processing paper {p.published_date}")
+                self.log.info(f"Processing paper {p.arxiv_id} (published: {p.published_date})")
                 try:
                     results.append({
                         "arxiv_id": p.arxiv_id,
@@ -447,8 +539,7 @@ class LoadPapersForEmbeddingOperator(BaseOperator):
                         "categories": p.categories or [],
                         "primary_category": p.primary_category,
                         "published_date": p.published_date if p.published_date else None,
-                        "content": p.full_text or "",
-                        "sections": p.sections or [],
+                        "docling_document": p.docling_document,
                     })
                 except Exception as e:
                     self.log.warning(f"Failed to map paper {getattr(p, 'arxiv_id', 'unknown')}: {e}")

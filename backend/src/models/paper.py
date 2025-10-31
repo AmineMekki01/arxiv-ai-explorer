@@ -27,8 +27,7 @@ class Paper(Base):
     categories = Column(JSON, nullable=False)
     subjects = Column(JSON, nullable=True)
     
-    full_text = Column(Text, nullable=True)
-    sections = Column(JSON, nullable=True)
+    docling_document = Column(JSON, nullable=True)
     key_concepts = Column(JSON, nullable=True)
 
     metrics = Column(JSON, nullable=True)

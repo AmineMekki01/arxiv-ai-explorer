@@ -1,3 +1,4 @@
+import torch
 import logging
 from pathlib import Path
 from typing import Optional
@@ -6,7 +7,8 @@ import pypdfium2 as pdfium
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
-from src.schemas.pdf_parser.models import PaperSection, ParserType, PdfContent
+from docling.datamodel.document import DoclingDocument
+from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +24,31 @@ class DoclingParser:
         :param do_ocr: Enable OCR for scanned PDFs (default: False, very slow)
         :param do_table_structure: Extract table structures (default: True)
         """
-        pipeline_options = PdfPipelineOptions(
-            do_table_structure=do_table_structure,
-            do_ocr=do_ocr,
-        )
-
-        self._converter = DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)})
+        self._init_pipeline_options(do_ocr=do_ocr, do_table_structure=do_table_structure)
+        self._converter = DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=self.pipeline_options)})
         self._warmed_up = False
         self.max_pages = max_pages
         self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
+
+    def _init_pipeline_options(self, do_ocr: bool, do_table_structure: bool):
+        if torch.cuda.is_available():
+            self.pipeline_options = PdfPipelineOptions(
+                do_table_structure=do_table_structure,
+                do_ocr=do_ocr,
+                accelerator_options=AcceleratorOptions(device=AcceleratorDevice.GPU)
+            )
+        elif torch.backends.mps.is_available():
+            self.pipeline_options = PdfPipelineOptions(
+                do_table_structure=do_table_structure,
+                do_ocr=do_ocr,
+                accelerator_options=AcceleratorOptions(device=AcceleratorDevice.MPS)
+            )
+        else:
+            self.pipeline_options = PdfPipelineOptions(
+                do_table_structure=do_table_structure,
+                do_ocr=do_ocr,
+                accelerator_options=AcceleratorOptions(device=AcceleratorDevice.CPU)
+            )
 
     def _warm_up_models(self):
         """Pre-warm the models with a small dummy document to avoid cold start."""
@@ -81,12 +99,12 @@ class DoclingParser:
             logger.error(f"Error validating PDF {pdf_path}: {e}")
             raise ValueError(f"Error validating PDF {pdf_path}: {e}")
 
-    async def parse_pdf(self, pdf_path: Path) -> Optional[PdfContent]:
-        """Parse PDF using Docling parser.
+    async def parse_pdf(self, pdf_path: Path) -> Optional[DoclingDocument]:
+        """Parse PDF using Docling parser and return raw DoclingDocument.
         Limited to 20 pages to avoid memory issues with large papers.
 
         :param pdf_path: Path to PDF file
-        :returns: PdfContent object or None if parsing failed
+        :returns: DoclingDocument object or None if parsing failed
         """
         try:
             self._validate_pdf(pdf_path)
@@ -94,30 +112,9 @@ class DoclingParser:
 
             result = self._converter.convert(str(pdf_path), max_num_pages=self.max_pages, max_file_size=self.max_file_size_bytes)
             doc = result.document
-            sections = []
-            current_section = {"title": "Content", "content": ""}
-
-            for element in doc.texts:
-                if hasattr(element, "label") and element.label in ["title", "section_header"]:
-                    if current_section["content"].strip():
-                        sections.append(PaperSection(title=current_section["title"], content=current_section["content"].strip()))
-                    current_section = {"title": element.text.strip(), "content": ""}
-                else:
-                    if hasattr(element, "text") and element.text:
-                        current_section["content"] += element.text + "\n"
-
-            if current_section["content"].strip():
-                sections.append(PaperSection(title=current_section["title"], content=current_section["content"].strip()))
-
-            return PdfContent(
-                sections=sections,
-                figures=[],
-                tables=[],
-                raw_text=doc.export_to_text(),
-                references=[],
-                parser_used=ParserType.DOCLING,
-                metadata={"source": "docling", "note": "Content extracted from PDF, metadata comes from arXiv API"},
-            )
+            
+            logger.info(f"Parsed {pdf_path.name}")
+            return doc
 
         except ValueError as e:
             error_msg = str(e).lower()

@@ -149,9 +149,12 @@ class MetadataExtractor:
             matches = re.findall(pattern, text)
             if matches:
                 try:
-                    scores = [float(match) for match in matches]
+                    scores = []
+                    for match in matches:
+                        value = match[0] if isinstance(match, tuple) else match
+                        scores.append(float(value))
                     metrics[metric_name] = max(scores)
-                except ValueError:
+                except (ValueError, IndexError):
                     continue
         
         return metrics
