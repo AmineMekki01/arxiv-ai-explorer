@@ -473,12 +473,25 @@ class GenerateEmbeddingsOperator(BaseOperator):
             
             self.log.info(f"Generated {len(dense_embs)} sets of hybrid embeddings")
             
+            def _to_jsonable(obj):
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                if isinstance(obj, np.generic):
+                    return obj.item()
+                if isinstance(obj, dict):
+                    return {k: _to_jsonable(v) for k, v in obj.items()}
+                if isinstance(obj, (list, tuple)):
+                    return [_to_jsonable(v) for v in obj]
+                return obj
+
             for i, (dense, sparse) in enumerate(zip(dense_embs, sparse_embs)):
                 sparse_dict = sparse.as_object()
+                dense_json = _to_jsonable(dense)
+                sparse_json = _to_jsonable(sparse_dict)
                 
                 valid_chunks[i]["vectors"] = {
-                    "dense": dense,
-                    "sparse": sparse_dict,
+                    "dense": dense_json,
+                    "sparse": sparse_json,
                 }
                 valid_chunks[i]["embedding_model"] = "hybrid (dense + BM25)"
         else:
@@ -492,7 +505,11 @@ class GenerateEmbeddingsOperator(BaseOperator):
             self.log.info(f"Generated embeddings with dimension={dim}")
             
             for i, vec in enumerate(vectors):
-                valid_chunks[i]["vector"] = vec
+                try:
+                    vec_json = vec.tolist()  # numpy array -> list
+                except Exception:
+                    vec_json = vec
+                valid_chunks[i]["vector"] = vec_json
                 valid_chunks[i]["embedding_model"] = self.model_name
 
         result = {
