@@ -3,22 +3,8 @@ x-airflow-common:
   build:
     context: .
     dockerfile: docker/airflow/Dockerfile.airflow
-  environment:
-    &airflow-common-env
-    AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
-    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
-    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
-    AIRFLOW__WEBSERVER__RBAC: 'true'
-    DATABASE_URL: ${DATABASE_URL:-postgresql://researchmind:password@postgres:5432/researchmind}
-    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-    ARXIV_CATEGORIES: ${ARXIV_CATEGORIES:-cs.AI,cs.CL,cs.LG}
-    ARXIV_MAX_RESULTS: ${ARXIV_MAX_RESULTS:-50}
-    OPENAI_API_KEY: ${OPENAI_API_KEY}
-
+  env_file:
+    - .env
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
@@ -28,7 +14,6 @@ x-airflow-common:
     - ./data:/opt/airflow/data
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
-    &airflow-common-depends-on
     postgres:
       condition: service_healthy
     redis:
@@ -108,14 +93,10 @@ services:
       context: .
       dockerfile: docker/Dockerfile.backend
     container_name: researchmind-backend
+    env_file:
+      - .env
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://researchmind:password@postgres:5432/researchmind
-      - REDIS_URL=redis://redis:6379/0
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
-      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.1}
     volumes:
       - ./src:/app/src
       - ./data:/app/data
@@ -141,16 +122,8 @@ services:
         mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,dags,plugins}
         exec /entrypoint airflow db init
-    environment:
-      <<: *airflow-common-env
-      _AIRFLOW_DB_MIGRATE: 'true'
-      _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: airflow
-      _AIRFLOW_WWW_USER_PASSWORD: airflow
-      _AIRFLOW_WWW_USER_EMAIL: admin@example.com
-      _AIRFLOW_WWW_USER_FIRSTNAME: Air
-      _AIRFLOW_WWW_USER_LASTNAME: Flow
-      _AIRFLOW_WWW_USER_ROLE: Admin
+    env_file:
+      - .env
     user: "0:0"
     volumes:
       - ./airflow:/opt/airflow
@@ -169,7 +142,6 @@ services:
       start_period: 60s
     restart: always
     depends_on:
-      <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
 
@@ -185,7 +157,6 @@ services:
       start_period: 30s
     restart: always
     depends_on:
-      <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
       qdrant:

@@ -162,39 +162,26 @@ class MetadataExtractor:
     def _extract_author_institution_info(self, paper_data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract authors and affiliations using OpenAI."""
         try:
-            sections = paper_data.get('sections', [])
-            if not sections:
-                logger.warning("No sections found in paper data")
+            full_text = paper_data.get('_temp_full_text', '')
+            abstract_index = re.search(r'\nAbstract\n', full_text)
+            
+            text_before_abstract = full_text[:abstract_index.start()] if abstract_index else full_text
+            
+            if not text_before_abstract:
+                logger.warning("No text available for extraction")
                 return {'author_count': 0, 'authors': [], 'affiliations': []}
-            
-            abstract_index = None
-            for i, section in enumerate(sections):
-                if 'abstract' in section.get('title', '').lower():
-                    abstract_index = i
-                    break
-            
-            sections_to_use = sections[:abstract_index] if abstract_index else sections[:3]
-            
-            if not sections_to_use:
-                logger.warning("No sections available for extraction")
-                return {'author_count': 0, 'authors': [], 'affiliations': []}
-            
-            content = "\n".join(
-                f"{s.get('title', '')}\n{s.get('content', '')}" 
-                for s in sections_to_use
-            )
             
             title = paper_data.get('title', '')
             if title:
-                title_match = re.search(rf'(?i)\b{re.escape(title)}\b', content)
+                title_match = re.search(rf'(?i)\b{re.escape(title)}\b', text_before_abstract)
                 if title_match:
-                    content = content[title_match.end():]
+                    text_before_abstract = text_before_abstract[title_match.end():]
             
             response = self.client.chat.completions.create(
                 model=self.settings.metadata_extractor_model,
                 messages=[
-                    {"role": "system", "content": AFFILIATION_PROMPT.format(section=content)},
-                    {"role": "user", "content": content}
+                    {"role": "system", "content": AFFILIATION_PROMPT.format(section=text_before_abstract)},
+                    {"role": "user", "content": text_before_abstract}
                 ]
             )
             
@@ -235,15 +222,6 @@ class MetadataExtractor:
         
         return 'Computer Science'
     
-
-    def _get_full_text(self, paper_data: Dict[str, Any]) -> str:
-        """Get full text from paper data."""
-        all_sections = paper_data.get('sections', [])
-        full_text = "\n".join(
-            f"{section.get('title', '')}\n{section.get('content', '')}"
-            for section in all_sections
-        )
-        return full_text
     
     async def extract_metadata(self, paper_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -257,9 +235,8 @@ class MetadataExtractor:
         """
         logger.info(f"Extracting metadata for paper: {paper_data.get('arxiv_id', 'unknown')}")
         
-        full_text = self._get_full_text(paper_data)
         try:
-            metrics = self._extract_metrics(full_text)
+            metrics = self._extract_metrics(paper_data["_temp_full_text"])
             author_info = self._extract_author_institution_info(paper_data)
             research_area = self._extract_research_area(paper_data)
             
@@ -273,8 +250,8 @@ class MetadataExtractor:
                     if name not in research_areas_all:
                         research_areas_all.append(name)
             
-            word_count = len(full_text.split()) if full_text else 0
-            
+            word_count = len(paper_data["_temp_full_text"].split()) if paper_data["_temp_full_text"] else 0
+
             enhanced_metadata = {
                 'metrics': metrics,
                 'research_area': research_area,

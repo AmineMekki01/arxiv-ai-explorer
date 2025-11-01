@@ -397,8 +397,9 @@ class ChunkDocumentsOperator(BaseOperator):
                         "categories": p.get("categories", []),
                         "published_date": p.get("published_date"),
                         "authors": p.get("authors", []),
+                        "affiliations": p.get("affiliations", []),
                         "chunk_index": idx,
-                        "chunk_text": chunk.text if hasattr(chunk, 'text') else str(chunk)
+                        "chunk_text": chunk.text if hasattr(chunk, 'text') else str(chunk),
                     }
                     all_chunks.append(chunk_dict)
                 
@@ -557,6 +558,7 @@ class LoadPapersForEmbeddingOperator(BaseOperator):
                         "primary_category": p.primary_category,
                         "published_date": p.published_date if p.published_date else None,
                         "docling_document": p.docling_document,
+                        "affiliations": p.affiliations,
                     })
                 except Exception as e:
                     self.log.warning(f"Failed to map paper {getattr(p, 'arxiv_id', 'unknown')}: {e}")
