@@ -255,7 +255,6 @@ class SummarizingSession(SessionABC):
     Best for: Tasks needing context across the flow (planning, analysis, policy Q&A)
     """
 
-    # Only these keys are ever sent to the model
     _ALLOWED_MSG_KEYS = {"role", "content", "name", "tool_calls", "tool_call_id"}
 
     def __init__(

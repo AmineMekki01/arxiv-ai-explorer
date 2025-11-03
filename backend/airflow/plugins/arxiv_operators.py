@@ -50,6 +50,7 @@ class FetchArxivOperator(BaseOperator):
                     client.search_papers(
                         query=f"cat:{category}",
                         max_results=self.max_results,
+                        start=self.since_days,
                         sort_by="submittedDate",
                         sort_order="descending"
                     )
@@ -271,7 +272,7 @@ class PersistDBOperator(BaseOperator):
         
         self.log.info(f"Processing {len(papers)} papers for persistence")
         if not papers:
-            return {"persisted": 0, "skipped": 0}
+            return {"persisted": 0, "skipped": 0, "papers": []}
         
         if not get_sync_session or not Paper:
             self.log.error("Database session or Paper model not available")
@@ -279,6 +280,7 @@ class PersistDBOperator(BaseOperator):
             
         persisted = 0
         skipped = 0
+        processed_ids: List[str] = []
         
         try:
             with get_sync_session() as session:
@@ -305,6 +307,7 @@ class PersistDBOperator(BaseOperator):
                                         self.log.error(f"Error updating field {key}: {e}")
                             skipped += 1
                             self.log.info(f"Updated existing paper {data.get('arxiv_id')}")
+                            processed_ids.append(data.get("arxiv_id"))
                         else:
                             self.log.info(f"Creating new paper {data.get('arxiv_id')}...")
                             filtered_data = {k: v for k, v in data.items() if hasattr(Paper, k) and v is not None}
@@ -317,6 +320,7 @@ class PersistDBOperator(BaseOperator):
                                 self.log.error(f"Error creating paper {data.get('arxiv_id')}: {e}")
                                 raise
                             self.log.info(f"Added new paper {data.get('arxiv_id')} to session")
+                            processed_ids.append(data.get("arxiv_id"))
                     except Exception as e:
                         self.log.error(f"Failed to persist paper {raw.get('arxiv_id')}: {e}", exc_info=True)
                         try:
@@ -335,13 +339,18 @@ class PersistDBOperator(BaseOperator):
                     except Exception as commit_error:
                         self.log.error(f"Failed to commit session: {commit_error}", exc_info=True)
                         session.rollback()
-                        return {"persisted": 0, "skipped": 0, "error": str(commit_error)}
+                        return {"persisted": 0, "skipped": 0, "papers": [], "error": str(commit_error)}
                 
-                return {"persisted": persisted, "skipped": skipped}
+                unique_ids = sorted(set([pid for pid in processed_ids if pid]))
+                return {
+                    "persisted": persisted,
+                    "skipped": skipped,
+                    "papers": [{"arxiv_id": aid} for aid in unique_ids]
+                }
                 
         except Exception as e:
             self.log.error(f"Unexpected error in PersistDBOperator: {e}", exc_info=True)
-            return {"persisted": 0, "skipped": 0, "error": str(e)}
+            return {"persisted": 0, "skipped": 0, "papers": [], "error": str(e)}
 
 
 class ChunkDocumentsOperator(BaseOperator):
@@ -507,7 +516,7 @@ class GenerateEmbeddingsOperator(BaseOperator):
             
             for i, vec in enumerate(vectors):
                 try:
-                    vec_json = vec.tolist()  # numpy array -> list
+                    vec_json = vec.tolist()
                 except Exception:
                     vec_json = vec
                 valid_chunks[i]["vector"] = vec_json

@@ -52,7 +52,6 @@ def extract_full_text(doc: DoclingDocument) -> str:
         Full text content
     """
     try:
-        # Extract text from all text elements
         if hasattr(doc, 'texts') and doc.texts:
             return "\n".join([t.text for t in doc.texts if hasattr(t, 'text') and t.text])
         return ""
