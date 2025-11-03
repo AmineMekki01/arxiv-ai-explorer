@@ -14,6 +14,7 @@ from plugins.arxiv_operators import (
     ExtractMetadataOperator,
     PersistDBOperator,
 )
+from plugins.citation_operators import ExtractCitationsOperator
 
 DAG_ID = "arxiv_daily_ingestion"
 
@@ -44,7 +45,7 @@ with DAG(
 
     fetch_papers = FetchArxivOperator(
         task_id="fetch_papers",
-        since_days=1,
+        since_days=300,
         doc_md="Fetch recent papers from arXiv API for configured categories"
     )
 
@@ -66,10 +67,19 @@ with DAG(
         doc_md="Persist papers to PostgreSQL database using existing models"
     )
 
+    extract_citations = ExtractCitationsOperator(
+        task_id="extract_citations",
+        input_task_id="persist_db",
+        batch_size=5,
+        max_papers=100,
+        only_missing=True,
+        doc_md="Extract citations and references from Semantic Scholar for new papers"
+    )
+
     end = EmptyOperator(
         task_id="end",
         trigger_rule=TriggerRule.ALL_DONE,
         doc_md="End of the ingestion pipeline"
     )
 
-    start >> fetch_papers >> parse_pdfs >> extract_metadata >> persist_db >> end
+    start >> fetch_papers >> parse_pdfs >> extract_metadata >> persist_db >> extract_citations >> end

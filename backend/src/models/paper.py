@@ -36,8 +36,13 @@ class Paper(Base):
     affiliations = Column(JSON, nullable=True)
        
     citation_count = Column(Integer, default=0, nullable=False)
+    reference_count = Column(Integer, default=0, nullable=False)
+    influential_citation_count = Column(Integer, default=0, nullable=False)
     references = Column(JSON, nullable=True)
     cited_by = Column(JSON, nullable=True)
+    
+    s2_paper_id = Column(String(100), nullable=True, index=True)
+    last_citation_update = Column(DateTime(timezone=True), nullable=True)
     
     embedding_vector = Column(Text, nullable=True)
     embedding_model = Column(String(100), nullable=True)
@@ -71,7 +76,23 @@ class Paper(Base):
         else:
             return f"{self.authors[0]} et al."
 
+    @property
+    def has_citation_data(self) -> bool:
+        """Check if citation data has been extracted."""
+        return self.references is not None or self.cited_by is not None
+    
+    @property
+    def citation_velocity(self) -> float:
+        """Rough citation rate (citations per year since publication)."""
+        if not self.published_date or self.citation_count == 0:
+            return 0.0
+        from datetime import datetime, timezone
+        age_years = (datetime.now(timezone.utc) - self.published_date).days / 365.25
+        return self.citation_count / max(age_years, 0.1)
+    
     __table_args__ = (
         Index('idx_papers_category_date', 'primary_category', 'published_date'),
         Index('idx_papers_processed', 'is_processed', 'is_embedded'),
+        Index('idx_papers_citations', 'citation_count'),
+        Index('idx_papers_s2_id', 's2_paper_id'),
     )
