@@ -19,6 +19,7 @@ from plugins.citation_operators import (
     FindStaleCitationsOperator,
     ExtractCitationsOperator,
 )
+from plugins.kg_operators import UpdateCitationNetworkOperator
 
 DAG_ID = "citation_refresh_pipeline"
 
@@ -63,10 +64,16 @@ with DAG(
         doc_md="Re-extract citations from Semantic Scholar to get updated counts"
     )
 
+    update_citation_network = UpdateCitationNetworkOperator(
+        task_id="update_citation_network",
+        input_task_id="find_stale_papers",
+        doc_md="Update citation relationships in knowledge graph with refreshed data"
+    )
+
     end = EmptyOperator(
         task_id="end",
         trigger_rule=TriggerRule.ALL_DONE,
         doc_md="End of the citation refresh pipeline"
     )
 
-    start >> find_stale >> refresh_citations >> end
+    start >> find_stale >> refresh_citations >> update_citation_network >> end

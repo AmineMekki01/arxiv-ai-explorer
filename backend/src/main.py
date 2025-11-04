@@ -9,6 +9,7 @@ from src.database import check_database_connection, create_tables
 from src.core import logger
 from src.models.paper import Paper
 from src.routes.assistant import router as assistant_router
+from src.routes.graph import router as graph_router
 
 settings = get_settings()
 
@@ -50,6 +51,7 @@ app.add_middleware(
 )
 
 app.include_router(assistant_router)
+app.include_router(graph_router)
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):

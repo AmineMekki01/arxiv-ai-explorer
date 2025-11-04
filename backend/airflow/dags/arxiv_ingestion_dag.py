@@ -15,6 +15,7 @@ from plugins.arxiv_operators import (
     PersistDBOperator,
 )
 from plugins.citation_operators import ExtractCitationsOperator
+from plugins.kg_operators import BuildKnowledgeGraphOperator
 
 DAG_ID = "arxiv_daily_ingestion"
 
@@ -76,10 +77,17 @@ with DAG(
         doc_md="Extract citations and references from Semantic Scholar for new papers"
     )
 
+    build_knowledge_graph = BuildKnowledgeGraphOperator(
+        task_id="build_knowledge_graph",
+        input_task_id="persist_db",
+        max_papers=100,
+        doc_md="Build knowledge graph nodes and relationships including citations"
+    )
+
     end = EmptyOperator(
         task_id="end",
         trigger_rule=TriggerRule.ALL_DONE,
         doc_md="End of the ingestion pipeline"
     )
 
-    start >> fetch_papers >> parse_pdfs >> extract_metadata >> persist_db >> extract_citations >> end
+    start >> fetch_papers >> parse_pdfs >> extract_metadata >> persist_db >> extract_citations >> build_knowledge_graph >> end

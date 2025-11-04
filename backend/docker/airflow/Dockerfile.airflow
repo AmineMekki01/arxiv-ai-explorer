@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir \
     docling==2.53.0 \
     openai==1.107.1 \
     loguru==0.7.3 \
-    fastembed==0.4.2
+    fastembed==0.4.2 \
+    neo4j==6.0.2
 
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
