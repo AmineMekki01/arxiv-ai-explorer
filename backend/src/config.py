@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     qdrant_distance: str = "COSINE"
     qdrant_top_k: int = 10
     
+    # Neo4j (Knowledge Graph)
+    neo4j_uri: str = "bolt://neo4j:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = ""
+    neo4j_database: str = "neo4j"
+    
     # OpenAI API
     openai_api_key: str = ""
     openai_model: str = "gpt-5-mini"
