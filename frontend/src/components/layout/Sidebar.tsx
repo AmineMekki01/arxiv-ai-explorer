@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import {
   Science as ScienceIcon,
+  Search as SearchIcon,
 } from '@mui/icons-material';
 import '../../styles/animations.css';
 
@@ -23,6 +24,7 @@ interface SidebarProps {
 
 const menuItems = [
   { text: 'Research Workspace', icon: <ScienceIcon />, path: '/research' },
+  { text: 'Search', icon: <SearchIcon />, path: '/search' },
 ];
 
 
