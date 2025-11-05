@@ -9,6 +9,17 @@ const api = axios.create({
   },
 });
 
+api.interceptors.request.use((config) => {
+  try {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      config.headers = config.headers || {};
+      (config.headers as any).Authorization = `Bearer ${token}`;
+    }
+  } catch {}
+  return config;
+});
+
 export const apiEndpoints = {
   health: () => api.get('/health'),
   healthDetailed: () => api.get('/health/detailed'),

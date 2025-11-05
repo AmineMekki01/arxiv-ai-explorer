@@ -1,14 +1,23 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from uuid import uuid4
-from sqlalchemy.orm import Session
+from uuid import uuid4, UUID
 from src.database import get_sync_session
 from src.models.chat import Chat, Message
-from src.core import logger
 
 class ChatStore:
     def __init__(self):
         pass
+
+    @staticmethod
+    def _to_uuid(value: Optional[str | UUID]) -> Optional[UUID]:
+        if value is None:
+            return None
+        if isinstance(value, UUID):
+            return value
+        try:
+            return UUID(str(value))
+        except Exception:
+            return None
 
     def create_chat(self, name: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
         with get_sync_session() as db:
@@ -28,8 +37,9 @@ class ChatStore:
     def list_chats(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         with get_sync_session() as db:
             q = db.query(Chat)
-            if user_id is not None:
-                q = q.filter(Chat.user_id == user_id)
+            uid = self._to_uuid(user_id)
+            if uid is not None:
+                q = q.filter(Chat.user_id == uid)
             chats = q.order_by(Chat.updated_at.desc()).all()
             return [self._chat_to_dict(c) for c in chats]
 
@@ -38,7 +48,8 @@ class ChatStore:
             chat = db.query(Chat).filter(Chat.id == chat_id).first()
             if not chat:
                 return False
-            if user_id is not None and chat.user_id != user_id:
+            uid = self._to_uuid(user_id)
+            if uid is not None and chat.user_id != uid:
                 return False
             chat.name = name
             chat.updated_at = datetime.utcnow()
@@ -50,7 +61,8 @@ class ChatStore:
             chat = db.query(Chat).filter(Chat.id == chat_id).first()
             if not chat:
                 return False
-            if user_id is not None and chat.user_id != user_id:
+            uid = self._to_uuid(user_id)
+            if uid is not None and chat.user_id != uid:
                 return False
             db.delete(chat)
             db.commit()
@@ -61,12 +73,17 @@ class ChatStore:
             chat = db.query(Chat).filter(Chat.id == chat_id).first()
             if not chat:
                 raise ValueError(f"Chat {chat_id} not found")
-            if user_id is not None and chat.user_id != user_id:
+            uid = self._to_uuid(user_id)
+            if chat.user_id is None and uid is not None:
+                chat.user_id = uid
+                db.commit()
+                db.refresh(chat)
+            if uid is not None and chat.user_id != uid:
                 raise ValueError("Unauthorized")
             msg = Message(
                 id=str(uuid4()),
                 chat_id=chat_id,
-                user_id=user_id,
+                user_id=uid,
                 role=role,
                 content=content,
                 created_at=datetime.utcnow(),
@@ -86,7 +103,8 @@ class ChatStore:
             chat = db.query(Chat).filter(Chat.id == chat_id).first()
             if not chat:
                 raise ValueError(f"Chat {chat_id} not found")
-            if user_id is not None and chat.user_id != user_id:
+            uid = self._to_uuid(user_id)
+            if uid is not None and chat.user_id != uid:
                 raise ValueError("Unauthorized")
             q = db.query(Message).filter(Message.chat_id == chat_id)
             if before:
@@ -103,7 +121,12 @@ class ChatStore:
             chat = db.query(Chat).filter(Chat.id == chat_id).first()
             if not chat:
                 return None
-            if user_id is not None and chat.user_id != user_id:
+            uid = self._to_uuid(user_id)
+            if chat.user_id is None and uid is not None:
+                chat.user_id = uid
+                db.commit()
+                db.refresh(chat)
+            if uid is not None and chat.user_id != uid:
                 return None
             return self._chat_to_dict(chat)
 

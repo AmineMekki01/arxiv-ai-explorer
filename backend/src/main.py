@@ -8,9 +8,12 @@ from src.config import get_settings
 from src.database import check_database_connection, create_tables
 from src.core import logger
 from src.models.paper import Paper
+from src.models.user import User, UserPreferences
 from src.routes.assistant import router as assistant_router
 from src.routes.search import router as search_router
 from src.routes.chat import router as chat_router
+from src.routes.auth import router as auth_router
+from src.routes.preferences import router as preferences_router
 
 settings = get_settings()
 
@@ -51,6 +54,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
+app.include_router(preferences_router)
 app.include_router(assistant_router)
 app.include_router(search_router)
 app.include_router(chat_router)

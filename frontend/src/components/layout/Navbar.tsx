@@ -5,18 +5,24 @@ import {
   Typography,
   IconButton,
   Box,
+  Button,
+  Stack,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
   Science as ScienceIcon,
 } from '@mui/icons-material';
 import '../../styles/animations.css';
+import { useAuth } from '../../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 interface NavbarProps {
   onMenuClick: () => void;
 }
 
 const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
+  const navigate = useNavigate();
+  const { isAuthenticated, logout } = useAuth();
   return (
     <AppBar
       position="fixed"
@@ -85,6 +91,49 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
             </Typography>
           </Box>
         </Box>
+
+        {/* Right actions */}
+        <Stack direction="row" spacing={{ xs: 1, sm: 1.5 }} alignItems="center">
+          {isAuthenticated ? (
+            <>
+              <Button
+                variant="text"
+                size="small"
+                onClick={() => navigate('/settings')}
+                sx={{ textTransform: 'none', color: 'text.primary' }}
+              >
+                Settings
+              </Button>
+              <Button
+                variant="contained"
+                size="small"
+                onClick={logout}
+                sx={{ textTransform: 'none' }}
+              >
+                Logout
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="text"
+                size="small"
+                onClick={() => navigate('/login')}
+                sx={{ textTransform: 'none', color: 'text.primary' }}
+              >
+                Login
+              </Button>
+              <Button
+                variant="contained"
+                size="small"
+                onClick={() => navigate('/register')}
+                sx={{ textTransform: 'none' }}
+              >
+                Sign up
+              </Button>
+            </>
+          )}
+        </Stack>
       </Toolbar>
     </AppBar>
   );
