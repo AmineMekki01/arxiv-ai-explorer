@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60 * 24 * 7 
     
+    # Semantic Scholar API
+    s2_api_key: str = ""
+    s2_base: str = "https://api.semanticscholar.org/graph/v1"
+    s2_api_delay_time: int = 2
+    
     # Embeddings
     embedding_dim: int = 384
     embedding_model_local: str = "all-MiniLM-L6-v2"
