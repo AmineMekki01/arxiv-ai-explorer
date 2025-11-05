@@ -4,6 +4,7 @@ import { Box } from '@mui/material';
 import Navbar from './components/layout/Navbar';
 import Sidebar from './components/layout/Sidebar';
 import ResearchWorkspace from './pages/ResearchWorkspace';
+import { PaperDetail } from './pages/PaperDetail';
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
@@ -30,6 +31,7 @@ function App() {
       >
         <Routes>
           <Route path="/research" element={<ResearchWorkspace />} />
+          <Route path="/paper/:arxivId" element={<PaperDetail />} />
           <Route path="/" element={<ResearchWorkspace />} />
         </Routes>
       </Box>

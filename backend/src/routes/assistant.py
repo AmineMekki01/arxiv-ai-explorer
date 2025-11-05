@@ -26,16 +26,16 @@ class ContextStrategyRequest(BaseModel):
 @router.get("/session/{chat_id}")
 async def get_session_info(chat_id: str):
     """Get detailed information about a conversation session."""
-    logger.info(f"📊 Getting session info for chat_id: {chat_id}")
+    logger.info(f"Getting session info for chat_id: {chat_id}")
     try:
         session_info = await retrieval_agent.get_session_info(chat_id)
-        logger.info(f"✅ Session info retrieved: {session_info.get('status', 'unknown')} - {session_info.get('total_items', 0)} items")
+        logger.info(f"Session info retrieved: {session_info.get('status', 'unknown')} - {session_info.get('total_items', 0)} items")
         return {
             "status": "success",
             "session_info": session_info
         }
     except Exception as e:
-        logger.error(f"❌ Failed to get session info for {chat_id}: {e}")
+        logger.error(f"Failed to get session info for {chat_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get session info: {e}")
 
 @router.get("")
@@ -83,8 +83,8 @@ async def query_agent(
 @router.post("/query")
 async def query_agent_post(request: QueryRequest):
     """Process a user query with intelligent context management (POST version)."""
-    logger.info(f"📥 POST /query - chat_id: {request.chat_id}, type: {request.conversation_type}")
-    logger.info(f"💬 Query: {request.query[:100]}{'...' if len(request.query) > 100 else ''}")
+    logger.info(f"POST /query - chat_id: {request.chat_id}, type: {request.conversation_type}")
+    logger.info(f"Query: {request.query[:100]}{'...' if len(request.query) > 100 else ''}")
     
     try:
         result = await asyncio.wait_for(
@@ -98,8 +98,8 @@ async def query_agent_post(request: QueryRequest):
         
         session_info = await retrieval_agent.get_session_info(request.chat_id)
         
-        logger.info(f"✅ Query processed successfully for {request.chat_id}")
-        logger.info(f"📊 Session: {session_info.get('user_turns', 0)} turns, strategy: {session_info.get('current_strategy', 'unknown')}")
+        logger.info(f"Query processed successfully for {request.chat_id}")
+        logger.info(f"Session: {session_info.get('user_turns', 0)} turns, strategy: {session_info.get('current_strategy', 'unknown')}")
         
         if isinstance(result, dict):
             return {
@@ -121,32 +121,32 @@ async def query_agent_post(request: QueryRequest):
                 "session_info": session_info
             }
     except asyncio.TimeoutError:
-        logger.warning(f"⏱️ Query timeout for chat_id: {request.chat_id}")
+        logger.warning(f"Query timeout for chat_id: {request.chat_id}")
         raise HTTPException(
             status_code=408, 
             detail="Query processing timed out. Please try a simpler query or try again later."
         )
     except Exception as e:
-        logger.error(f"❌ Query processing failed for {request.chat_id}: {e}", exc_info=True)
+        logger.error(f"Query processing failed for {request.chat_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Query processing failed: {e}")
 
 @router.delete("/session/{chat_id}")
 async def clear_session(chat_id: str):
     """Clear a conversation session and its history."""
-    logger.info(f"🗑️ Clearing session: {chat_id}")
+    logger.info(f"Clearing session: {chat_id}")
     try:
         success = await retrieval_agent.clear_session(chat_id)
         if success:
-            logger.info(f"✅ Session {chat_id} cleared successfully")
+            logger.info(f"Session {chat_id} cleared successfully")
         else:
-            logger.warning(f"⚠️ Session {chat_id} not found")
+            logger.warning(f"Session {chat_id} not found")
         return {
             "status": "success" if success else "not_found",
             "message": f"Session {chat_id} cleared" if success else f"Session {chat_id} not found",
             "chat_id": chat_id
         }
     except Exception as e:
-        logger.error(f"❌ Failed to clear session {chat_id}: {e}")
+        logger.error(f"Failed to clear session {chat_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear session: {e}")
 
 @router.post("/session/{chat_id}/strategy")
@@ -158,7 +158,7 @@ async def switch_context_strategy(chat_id: str, request: ContextStrategyRequest)
         
         if success:
             session_info = await retrieval_agent.get_session_info(chat_id)
-            logger.info(f"✅ Strategy switched to {request.strategy} for {chat_id}")
+            logger.info(f"Strategy switched to {request.strategy} for {chat_id}")
             return {
                 "status": "success",
                 "message": f"Switched session {chat_id} to strategy: {request.strategy}",
@@ -167,14 +167,14 @@ async def switch_context_strategy(chat_id: str, request: ContextStrategyRequest)
                 "session_info": session_info
             }
         else:
-            logger.warning(f"⚠️ Session {chat_id} not found for strategy switch")
+            logger.warning(f"Session {chat_id} not found for strategy switch")
             return {
                 "status": "not_found",
                 "message": f"Session {chat_id} not found",
                 "chat_id": chat_id
             }
     except Exception as e:
-        logger.error(f"❌ Failed to switch strategy for {chat_id}: {e}")
+        logger.error(f"Failed to switch strategy for {chat_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to switch strategy: {e}")
 
 @router.get("/recommendations/{conversation_type}")
@@ -231,7 +231,7 @@ async def add_focused_paper(chat_id: str, request: FocusPaperRequest):
         retrieval_agent.add_focused_paper(chat_id, request.arxiv_id)
         focused_papers = retrieval_agent.get_focused_papers(chat_id)
         
-        logger.info(f"📌 Paper {request.arxiv_id} focused for chat {chat_id}")
+        logger.info(f"Paper {request.arxiv_id} focused for chat {chat_id}")
         
         return {
             "status": "success",
@@ -241,7 +241,7 @@ async def add_focused_paper(chat_id: str, request: FocusPaperRequest):
             "focused_papers": focused_papers
         }
     except Exception as e:
-        logger.error(f"❌ Failed to focus paper: {e}")
+        logger.error(f"Failed to focus paper: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to focus paper: {e}")
 
 @router.delete("/session/{chat_id}/focus/{arxiv_id}")
@@ -251,7 +251,7 @@ async def remove_focused_paper(chat_id: str, arxiv_id: str):
         retrieval_agent.remove_focused_paper(chat_id, arxiv_id)
         focused_papers = retrieval_agent.get_focused_papers(chat_id)
         
-        logger.info(f"📍 Paper {arxiv_id} unfocused for chat {chat_id}")
+        logger.info(f"Paper {arxiv_id} unfocused for chat {chat_id}")
         
         return {
             "status": "success",
@@ -261,7 +261,7 @@ async def remove_focused_paper(chat_id: str, arxiv_id: str):
             "focused_papers": focused_papers
         }
     except Exception as e:
-        logger.error(f"❌ Failed to unfocus paper: {e}")
+        logger.error(f"Failed to unfocus paper: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to unfocus paper: {e}")
 
 @router.delete("/session/{chat_id}/focus")
@@ -279,7 +279,7 @@ async def clear_focused_papers(chat_id: str):
             "focused_count": 0
         }
     except Exception as e:
-        logger.error(f"❌ Failed to clear focused papers: {e}")
+        logger.error(f"Failed to clear focused papers: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear focused papers: {e}")
 
 @router.get("/session/{chat_id}/focus")
@@ -305,7 +305,7 @@ async def get_focused_papers(chat_id: str):
                                 "citations": result[0].get("citations", 0)
                             })
             except Exception as e:
-                logger.warning(f"⚠️ Could not fetch paper details from graph: {e}")
+                logger.warning(f"Could not fetch paper details from graph: {e}")
                 papers = [{"arxiv_id": arxiv_id, "title": arxiv_id} for arxiv_id in focused_ids]
         
         return {
@@ -315,5 +315,73 @@ async def get_focused_papers(chat_id: str):
             "count": len(papers)
         }
     except Exception as e:
-        logger.error(f"❌ Failed to get focused papers: {e}")
+        logger.error(f"Failed to get focused papers: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get focused papers: {e}")
+
+@router.get("/papers/{arxiv_id}/detail")
+async def get_paper_detail(arxiv_id: str):
+    """Get detailed information about a specific paper."""
+    try:
+        from src.database import get_sync_session
+        from src.models.paper import Paper
+        from src.services.knowledge_graph import Neo4jClient
+        
+        logger.info(f"Fetching paper details for {arxiv_id}")
+        
+        paper_metadata = None
+        try:
+            with get_sync_session() as db:
+                paper_metadata = db.query(Paper).filter(Paper.arxiv_id == arxiv_id).first()
+                
+                if paper_metadata:
+                    logger.info(f"Paper found in PostgreSQL: {paper_metadata.title[:50]}...")
+        except Exception as e:
+            logger.warning(f"Could not query PostgreSQL: {e}")
+        
+        citation_count = 0
+        is_seminal = False
+        
+        try:
+            with Neo4jClient() as client:
+                query = """
+                MATCH (p:Paper {arxiv_id: $arxiv_id})
+                OPTIONAL MATCH (cited:Paper)-[:CITES]->(p)
+                WITH p, count(DISTINCT cited) as citation_count
+                RETURN citation_count,
+                       CASE WHEN citation_count > 100 THEN true ELSE false END as is_seminal
+                """
+                
+                result = client.execute_query(query, {"arxiv_id": arxiv_id})
+                
+                if result and len(result) > 0:
+                    citation_count = result[0].get("citation_count", 0)
+                    is_seminal = result[0].get("is_seminal", False)
+                    logger.info(f"Citation data from Neo4j: {citation_count} citations")
+        except Exception as e:
+            logger.warning(f"Could not get citation data from Neo4j: {e}")
+        
+        if paper_metadata:
+            return {
+                "status": "success",
+                "data": {
+                    "arxiv_id": paper_metadata.arxiv_id,
+                    "title": paper_metadata.title,
+                    "abstract": paper_metadata.abstract,
+                    "authors": paper_metadata.authors if isinstance(paper_metadata.authors, list) else [],
+                    "published_date": paper_metadata.published_date.isoformat() if paper_metadata.published_date else "",
+                    "updated_date": paper_metadata.updated_date.isoformat() if paper_metadata.updated_date else None,
+                    "primary_category": paper_metadata.primary_category,
+                    "categories": paper_metadata.categories if isinstance(paper_metadata.categories, list) else [],
+                    "citation_count": citation_count,
+                    "is_seminal": is_seminal
+                }
+            }
+        
+        logger.error(f"Paper {arxiv_id} not found in database")
+        raise HTTPException(status_code=404, detail=f"Paper {arxiv_id} not found in database")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get paper details: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get paper details: {str(e)}")

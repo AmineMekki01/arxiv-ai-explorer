@@ -93,17 +93,39 @@ interface SearchResult {
 }
 
 const ResearchWorkspace: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
+  const [chatId] = useState(() => {
+    const savedChatId = sessionStorage.getItem('current_chat_id');
+    if (savedChatId) {
+      return savedChatId;
+    }
+    const newChatId = `chat_${Date.now()}`;
+    sessionStorage.setItem('current_chat_id', newChatId);
+    return newChatId;
+  });
+  
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const savedMessages = sessionStorage.getItem(`chat_messages_${chatId}`);
+    if (savedMessages) {
+      try {
+        const parsed = JSON.parse(savedMessages);
+        return parsed.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        }));
+      } catch (error) {
+        console.error('Failed to restore messages:', error);
+      }
+    }
+    return [{
       id: '1',
       type: 'assistant',
       content: 'Hello! I\'m your AI research assistant. I can help you search through arXiv papers, analyze content, and provide insights. What would you like to research today?',
       timestamp: new Date(),
-    }
-  ]);
+    }];
+  });
+  
   const [currentMessage, setCurrentMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [chatId] = useState(() => `chat_${Date.now()}`);
   const [conversationType, setConversationType] = useState<string>('research');
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const [backendStatus, setBackendStatus] = useState<'unknown' | 'connected' | 'disconnected'>('unknown');
@@ -157,15 +179,67 @@ const ResearchWorkspace: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const savedFocusedPapers = sessionStorage.getItem(`focused_papers_${chatId}`);
+    if (savedFocusedPapers) {
+      try {
+        setFocusedPapers(JSON.parse(savedFocusedPapers));
+      } catch (error) {
+        console.error('Failed to restore focused papers:', error);
+      }
+    }
+  }, [chatId]);
+
+  useEffect(() => {
+    if (messages.length > 1) {
+      sessionStorage.setItem(`chat_messages_${chatId}`, JSON.stringify(messages));
+    }
+  }, [messages, chatId]);
+
+
+  useEffect(() => {
+    sessionStorage.setItem(`focused_papers_${chatId}`, JSON.stringify(focusedPapers));
+  }, [focusedPapers, chatId]);
+
+  useEffect(() => {
     loadSessionInfo();
     loadFocusedPapers();
+  }, [chatId]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        loadFocusedPapers();
+      }
+    };
+
+    const handleFocus = () => {
+      loadFocusedPapers();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, [chatId]);
   
   const loadFocusedPapers = async () => {
     try {
       const response = await apiEndpoints.getFocusedPapers(chatId);
       if (response.data && response.data.focused_papers) {
-        setFocusedPapers(response.data.focused_papers);
+        const list = response.data.focused_papers as { arxiv_id: string; title: string }[];
+        const seen = new Set<string>();
+        const deduped: { arxiv_id: string; title: string }[] = [];
+        for (const p of list) {
+          if (!seen.has(p.arxiv_id)) {
+            seen.add(p.arxiv_id);
+            deduped.push(p);
+          }
+        }
+        setFocusedPapers(deduped);
+        sessionStorage.setItem(`focused_papers_${chatId}`, JSON.stringify(deduped));
       }
     } catch (error) {
       console.error('Failed to load focused papers:', error);
@@ -174,8 +248,20 @@ const ResearchWorkspace: React.FC = () => {
   
   const handleFocusPaper = async (arxivId: string, title: string) => {
     try {
+      const alreadyFocused = focusedPapers.some(p => p.arxiv_id === arxivId);
+      if (alreadyFocused) {
+        await apiEndpoints.removeFocusedPaper(chatId, arxivId);
+        const newFocusedPapers = focusedPapers.filter(p => p.arxiv_id !== arxivId);
+        setFocusedPapers(newFocusedPapers);
+        sessionStorage.setItem(`focused_papers_${chatId}`, JSON.stringify(newFocusedPapers));
+        return;
+      }
+
       await apiEndpoints.addFocusedPaper(chatId, { arxiv_id: arxivId, title });
-      setFocusedPapers(prev => [...prev, { arxiv_id: arxivId, title }]);
+
+      const newFocusedPapers = [...focusedPapers, { arxiv_id: arxivId, title }];
+      setFocusedPapers(newFocusedPapers);
+      sessionStorage.setItem(`focused_papers_${chatId}`, JSON.stringify(newFocusedPapers));
     } catch (error) {
       console.error('Failed to focus paper:', error);
     }
@@ -184,7 +270,10 @@ const ResearchWorkspace: React.FC = () => {
   const handleUnfocusPaper = async (arxivId: string) => {
     try {
       await apiEndpoints.removeFocusedPaper(chatId, arxivId);
-      setFocusedPapers(prev => prev.filter(p => p.arxiv_id !== arxivId));
+      
+      const newFocusedPapers = focusedPapers.filter(p => p.arxiv_id !== arxivId);
+      setFocusedPapers(newFocusedPapers);
+      sessionStorage.setItem(`focused_papers_${chatId}`, JSON.stringify(newFocusedPapers));
     } catch (error) {
       console.error('Failed to unfocus paper:', error);
     }
@@ -973,7 +1062,6 @@ const ResearchWorkspace: React.FC = () => {
         />
       </Drawer>
 
-      {/* Sources Sidebar - Opens on right */}
       <SourcesSidebar
         open={sourcesSidebarOpen}
         onClose={handleCloseSources}
