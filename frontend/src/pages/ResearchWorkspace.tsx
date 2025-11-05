@@ -21,6 +21,11 @@ import {
   Fade,
   Drawer,
   IconButton,
+  ListSubheader,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -93,37 +98,17 @@ interface SearchResult {
 }
 
 const ResearchWorkspace: React.FC = () => {
-  const [chatId] = useState(() => {
-    const savedChatId = sessionStorage.getItem('current_chat_id');
-    if (savedChatId) {
-      return savedChatId;
-    }
-    const newChatId = `chat_${Date.now()}`;
-    sessionStorage.setItem('current_chat_id', newChatId);
-    return newChatId;
-  });
-  
-  const [messages, setMessages] = useState<Message[]>(() => {
-    const savedMessages = sessionStorage.getItem(`chat_messages_${chatId}`);
-    if (savedMessages) {
-      try {
-        const parsed = JSON.parse(savedMessages);
-        return parsed.map((msg: any) => ({
-          ...msg,
-          timestamp: new Date(msg.timestamp)
-        }));
-      } catch (error) {
-        console.error('Failed to restore messages:', error);
-      }
-    }
-    return [{
+  const [chatId, setChatId] = useState<string>('');
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([
+    {
       id: '1',
       type: 'assistant',
-      content: 'Hello! I\'m your AI research assistant. I can help you search through arXiv papers, analyze content, and provide insights. What would you like to research today?',
+      content: 'Hello! I\'m your research assistant. I can help you find relevant papers, analyze research, and explore academic literature. What would you like to know?',
       timestamp: new Date(),
-    }];
-  });
-  
+    }
+  ]);
+
   const [currentMessage, setCurrentMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [conversationType, setConversationType] = useState<string>('research');
@@ -133,6 +118,10 @@ const ResearchWorkspace: React.FC = () => {
   const [focusedPapers, setFocusedPapers] = useState<Array<{arxiv_id: string, title: string, citations?: number}>>([]);
   const [sourcesSidebarOpen, setSourcesSidebarOpen] = useState(false);
   const [selectedSources, setSelectedSources] = useState<Source[]>([]);
+  const [chats, setChats] = useState<Array<{ id: string; name?: string | null; created_at?: string; updated_at?: string; turns?: number }>>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [newChatDialogOpen, setNewChatDialogOpen] = useState(false);
+  const [newChatName, setNewChatName] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -201,9 +190,55 @@ const ResearchWorkspace: React.FC = () => {
   }, [focusedPapers, chatId]);
 
   useEffect(() => {
+    const initializeChat = async () => {
+      try {
+        const res = await apiHelpers.listChats();
+        const existingChats = res.success ? (res.items || []) : [];
+        setChats(existingChats);
+
+        const savedChatId = sessionStorage.getItem('current_chat_id');
+        
+        if (savedChatId && existingChats.some((c: any) => c.id === savedChatId)) {
+          setChatId(savedChatId);
+          await loadMessages(savedChatId);
+        } 
+        else if (existingChats.length > 0) {
+          const mostRecent = existingChats[0];
+          setChatId(mostRecent.id);
+          sessionStorage.setItem('current_chat_id', mostRecent.id);
+          await loadMessages(mostRecent.id);
+        } 
+        else {
+          const createRes = await apiHelpers.createChat();
+          if (createRes.success && createRes.chat?.id) {
+            const newChatId = createRes.chat.id;
+            setChatId(newChatId);
+            sessionStorage.setItem('current_chat_id', newChatId);
+            setChats([createRes.chat]);
+            setMessages([{
+              id: '1',
+              type: 'assistant',
+              content: 'Hello! I\'m your research assistant. I can help you find relevant papers, analyze research, and explore academic literature. What would you like to know?',
+              timestamp: new Date(),
+            }]);
+          }
+        }
+        
+        setIsInitialized(true);
+      } catch (error) {
+        console.error('Failed to initialize chat:', error);
+        setIsInitialized(true);
+      }
+    };
+
+    initializeChat();
+  }, []); // Run once on mount
+
+  useEffect(() => {
+    if (!isInitialized || !chatId) return;
     loadSessionInfo();
     loadFocusedPapers();
-  }, [chatId]);
+  }, [chatId, isInitialized]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -288,6 +323,83 @@ const ResearchWorkspace: React.FC = () => {
     }
   };
 
+  const loadChats = async () => {
+    try {
+      const res = await apiHelpers.listChats();
+      if (res.success) {
+        setChats(res.items || []);
+      }
+    } catch (e) {
+      console.error('Failed to load chats:', e);
+    }
+  };
+
+  const handleSwitchChat = async (nextChatId: string) => {
+    if (!nextChatId || nextChatId === chatId) return;
+    sessionStorage.setItem('current_chat_id', nextChatId);
+    setChatId(nextChatId);
+    await loadMessages(nextChatId);
+    await loadSessionInfo();
+    await loadFocusedPapers();
+  };
+
+  const handleNewChat = () => {
+    setNewChatDialogOpen(true);
+  };
+
+  const handleCreateChat = async () => {
+    const chatName = newChatName.trim() || undefined;
+    setNewChatDialogOpen(false);
+    setNewChatName('');
+    
+    try {
+      const res = await apiHelpers.createChat(chatName);
+      if (res.success && res.chat?.id) {
+        await loadChats();
+        await handleSwitchChat(res.chat.id);
+      } else {
+        console.error('Failed to create chat:', res.error);
+        alert('Failed to create chat. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error creating chat:', error);
+      alert('Failed to create chat. Please try again.');
+    }
+  };
+
+  const handleCancelNewChat = () => {
+    setNewChatDialogOpen(false);
+    setNewChatName('');
+  };
+
+  const loadMessages = async (chatIdToLoad: string) => {
+    try {
+      const res = await apiHelpers.getMessages(chatIdToLoad);
+      if (res.success && res.messages) {
+        const msgs = res.messages
+          .slice()
+          .reverse()
+          .map((m: any) => ({
+            id: m.id,
+            type: m.role as 'user' | 'assistant',
+            content: m.content,
+            timestamp: new Date(m.created_at),
+            sources: m.sources || [],
+            graph_insights: m.graph_insights || {},
+          }));
+        setMessages(msgs);
+      } else {
+        setMessages([{
+          id: '1', type: 'assistant', content: 'New chat started. How can I help?', timestamp: new Date(),
+        }]);
+      }
+    } catch {
+      setMessages([{
+        id: '1', type: 'assistant', content: 'New chat started. How can I help?', timestamp: new Date(),
+      }]);
+    }
+  };
+
   const handleOpenSources = (sources: Source[]) => {
     const normalizedSources = sources.map(source => ({
       ...source,
@@ -307,9 +419,9 @@ const ResearchWorkspace: React.FC = () => {
 
   const handleSendMessage = async () => {
     if (!currentMessage.trim() || isLoading) return;
-
+    const clientMsgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: clientMsgId,
       type: 'user',
       content: currentMessage,
       timestamp: new Date(),
@@ -320,29 +432,26 @@ const ResearchWorkspace: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const result = await apiHelpers.queryAssistant(currentMessage, chatId, conversationType);
+      const res = await apiHelpers.sendMessage(chatId, 'user', currentMessage, clientMsgId);
       
-      if (result.success) {
-        const data = result.data;
-        
+      if (res.success && res.message) {
         const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
+          id: res.message.id,
           type: 'assistant',
-          content: data.final_output || data.content || 'I apologize, but I encountered an issue processing your request.',
-          timestamp: new Date(),
-          searchResults: data.search_results,
-          sessionInfo: data.session_info,
-          sources: data.sources || [],
-          graph_insights: data.graph_insights || {},
+          content: res.message.content,
+          timestamp: new Date(res.message.created_at),
+          sources: res.sources || [],
+          graph_insights: res.graph_insights || {},
         };
 
         setMessages(prev => [...prev, assistantMessage]);
+        await loadChats();
         
-        if (data.session_info) {
-          setSessionInfo(data.session_info);
+        if (res.sources && res.sources.length > 0) {
+          setSelectedSources(res.sources);
         }
       } else {
-        throw new Error(result.error);
+        throw new Error(res.error || 'Failed to send message');
       }
     } catch (error: any) {
       console.error('Error sending message:', error);
@@ -436,8 +545,8 @@ const ResearchWorkspace: React.FC = () => {
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <IconButton 
-              sx={{ display: { xs: 'flex', lg: 'none' } }}
-              onClick={() => setDrawerOpen(true)}
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              size="small"
             >
               <MenuIcon />
             </IconButton>
@@ -514,7 +623,45 @@ const ResearchWorkspace: React.FC = () => {
       </Box>
 
       <Grid container spacing={0} sx={{ flexGrow: 1, height: 'calc(100% - 80px)', overflow: 'hidden' }}>
-        <Grid item xs={12} lg={9} sx={{ height: '100%', display: 'flex', borderRight: { lg: '1px solid rgba(0, 0, 0, 0.08)' } }}>
+        {/* Left Sidebar: Chats */}
+        <Grid
+          item
+          sx={{
+            width: sidebarOpen ? 280 : 0,
+            borderRight: '1px solid rgba(0,0,0,0.08)',
+            bgcolor: 'white',
+            display: { xs: 'none', md: 'flex' },
+            flexDirection: 'column',
+            transition: 'width 0.2s',
+            overflow: 'hidden',
+          }}
+        >
+          <Box sx={{ p: 2, borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
+            <Button fullWidth variant="contained" onClick={handleNewChat}>New Chat</Button>
+          </Box>
+          <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
+            <List dense>
+              <ListSubheader>Chats</ListSubheader>
+              {chats.map((c) => (
+                <ListItem
+                  button
+                  selected={c.id === chatId}
+                  onClick={() => handleSwitchChat(c.id)}
+                  key={c.id}
+                >
+                  <ListItemText
+                    primary={c.name || 'Unnamed Chat'}
+                    secondary={c.updated_at ? new Date(c.updated_at).toLocaleString() : ''}
+                    primaryTypographyProps={{ sx: { fontSize: '0.9rem', fontWeight: c.name ? 600 : 400, color: c.name ? '#1e293b' : '#94a3b8' } }}
+                    secondaryTypographyProps={{ sx: { fontSize: '0.75rem' } }}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          </Box>
+        </Grid>
+
+        <Grid item xs sx={{ height: '100%', display: 'flex', borderRight: { lg: '1px solid rgba(0, 0, 0, 0.08)' } }}>
           <Box 
             sx={{ 
               flexGrow: 1,
@@ -1069,6 +1216,43 @@ const ResearchWorkspace: React.FC = () => {
         onFocusPaper={handleFocusPaper}
         focusedPapers={focusedPapers}
       />
+
+      <Dialog 
+        open={newChatDialogOpen} 
+        onClose={handleCancelNewChat}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Create New Chat</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Chat Name (optional)"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={newChatName}
+            onChange={(e) => setNewChatName(e.target.value)}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                handleCreateChat();
+              }
+            }}
+            placeholder="e.g., Transformer Research, LLM Papers..."
+            sx={{ mt: 2 }}
+          />
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+            You can leave this empty to create an unnamed chat, or give it a descriptive name.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelNewChat}>Cancel</Button>
+          <Button onClick={handleCreateChat} variant="contained">
+            Create
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
