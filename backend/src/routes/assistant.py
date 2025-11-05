@@ -4,14 +4,10 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from src.agents.base_agent import BaseAgent
+from src.agents.base_agent import retrieval_agent
 from src.core import logger
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
-
-logger.info("Initializing BaseAgent for assistant routes")
-retrieval_agent = BaseAgent()
-logger.info("BaseAgent initialized successfully")
 
 class QueryRequest(BaseModel):
     """Request model for agent queries."""
@@ -20,7 +16,6 @@ class QueryRequest(BaseModel):
     conversation_type: str = Field(default="research", description="Type of conversation: research, quick, analysis, general")
     
 class ContextStrategyRequest(BaseModel):
-    """Request model for changing context strategy."""
     strategy: str = Field(..., description="New context strategy: trimming, summarization, hybrid")
 
 @router.get("/session/{chat_id}")

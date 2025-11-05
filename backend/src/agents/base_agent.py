@@ -318,7 +318,7 @@ class BaseAgent:
                     return f"I encountered an issue processing your query '{query}', but I'm working to resolve it. Please try a simpler question."
             except:
                 return f"I'm currently experiencing technical difficulties. Please try again with a simpler query."
-    
+ 
     async def clear_session(self, chat_id: str) -> bool:
         """Clear a conversation session."""
         try:
@@ -332,6 +332,21 @@ class BaseAgent:
         except Exception as e:
             logger.error(f"Error clearing session {chat_id}: {e}")
             return False
+    
+    async def delete_chat(self, chat_id: str) -> None:
+        """Clean up agent state when a chat is deleted.
+        Note: Chat persistence (database) is handled by ChatStore."""
+        if chat_id in self._sessions:
+            try:
+                await self._sessions[chat_id].clear_session()
+            except Exception:
+                pass
+            del self._sessions[chat_id]
+        if chat_id in self._focused_papers:
+            del self._focused_papers[chat_id]
+        if chat_id in self._last_focused_papers_snapshot:
+            del self._last_focused_papers_snapshot[chat_id]
+        logger.info(f"Cleaned up agent state for deleted chat {chat_id}")
     
     def get_strategy_recommendations(self, conversation_type: str) -> Dict[str, Any]:
         """Get recommendations for context management strategy."""
@@ -365,23 +380,35 @@ class BaseAgent:
             return False
     
     def add_focused_paper(self, chat_id: str, arxiv_id: str) -> None:
-        """Add a paper to the focused list for this session."""
+        """Add a paper to the focused list for this session (idempotent - prevents duplicates)."""
         if chat_id not in self._focused_papers:
             self._focused_papers[chat_id] = []
-        self._focused_papers[chat_id].append(arxiv_id)
-        logger.info(f"Focused on paper {arxiv_id} for chat {chat_id}")
+        
+        if arxiv_id not in self._focused_papers[chat_id]:
+            self._focused_papers[chat_id].append(arxiv_id)
+            logger.info(f"✅ Focused on paper {arxiv_id} for chat {chat_id}")
+        else:
+            logger.info(f"⚠️ Paper {arxiv_id} already focused for chat {chat_id} - skipping duplicate")
     
     def remove_focused_paper(self, chat_id: str, arxiv_id: str) -> None:
         """Remove a paper from the focused list (idempotent: removes all occurrences)."""
+        logger.info(f"Attempting to unfocus paper {arxiv_id} for chat {chat_id}")
+        logger.info(f"Current focused papers before removal: {self._focused_papers.get(chat_id, [])}")
+        
         if chat_id in self._focused_papers and self._focused_papers[chat_id]:
             before = len(self._focused_papers[chat_id])
             self._focused_papers[chat_id] = [p for p in self._focused_papers[chat_id] if p != arxiv_id]
             after = len(self._focused_papers[chat_id])
             removed = before - after
+            
+            logger.info(f"Focused papers after removal: {self._focused_papers[chat_id]}")
+            
             if removed > 0:
-                logger.info(f"Unfocused paper {arxiv_id} for chat {chat_id} (removed {removed} occurrence(s))")
+                logger.info(f"✅ Unfocused paper {arxiv_id} for chat {chat_id} (removed {removed} occurrence(s))")
             else:
-                logger.info(f"Paper {arxiv_id} not present for chat {chat_id}")
+                logger.warning(f"⚠️ Paper {arxiv_id} not present in focused list for chat {chat_id}")
+        else:
+            logger.warning(f"⚠️ No focused papers found for chat {chat_id}")
     
     def clear_focused_papers(self, chat_id: str) -> None:
         """Clear all focused papers for this session."""
@@ -393,3 +420,8 @@ class BaseAgent:
     def get_focused_papers(self, chat_id: str) -> list:
         """Get list of focused paper IDs for this session (frontend is the source of truth)."""
         return self._focused_papers.get(chat_id, [])
+
+
+logger.info("Creating shared BaseAgent instance")
+retrieval_agent = BaseAgent()
+logger.info("Shared BaseAgent instance created successfully")

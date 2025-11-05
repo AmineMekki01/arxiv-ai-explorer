@@ -19,26 +19,48 @@ class Retriever:
         self._embedder = MultiVectorEmbedder()
 
 
-    def vector_search(self, query: str, limit: int = 10, include_sections: Optional[List[str]] = None, exclude_sections: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def vector_search(
+        self, 
+        query: str, 
+        limit: int = 10, 
+        include_sections: Optional[List[str]] = None, 
+        exclude_sections: Optional[List[str]] = None,
+        filter_arxiv_ids: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """Hybrid search using both dense and sparse embeddings with rank fusion."""
         from qdrant_client.http import models as qmodels
         print(f"Tool Called with Hybrid search: {query} | Limit: {limit} | Include Sections: {include_sections} | Exclude Sections: {exclude_sections}")
         
-        filters = None
+        filter_conditions = []
+        
+        if filter_arxiv_ids:
+            filter_conditions.append(
+                qmodels.FieldCondition(
+                    key="arxiv_id",
+                    match=qmodels.MatchAny(any=filter_arxiv_ids)
+                )
+            )
+        
         if include_sections:
-            filters = qmodels.Filter(
-                must=[qmodels.FieldCondition(
+            filter_conditions.append(
+                qmodels.FieldCondition(
                     key="section_title",
                     match=qmodels.MatchAny(any=include_sections)
-                )]
+                )
             )
-        elif exclude_sections:
+        
+        if exclude_sections:
             filters = qmodels.Filter(
+                must=filter_conditions if filter_conditions else None,
                 must_not=[qmodels.FieldCondition(
                     key="section_title",
                     match=qmodels.MatchAny(any=exclude_sections)
                 )]
             )
+        elif filter_conditions:
+            filters = qmodels.Filter(must=filter_conditions)
+        else:
+            filters = None
 
         query_embeddings = self._embedder.embed_query(query)
         dense_vector = query_embeddings["dense"].tolist()

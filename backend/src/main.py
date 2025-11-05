@@ -10,6 +10,7 @@ from src.core import logger
 from src.models.paper import Paper
 from src.routes.assistant import router as assistant_router
 from src.routes.search import router as search_router
+from src.routes.chat import router as chat_router
 
 settings = get_settings()
 
@@ -52,6 +53,7 @@ app.add_middleware(
 
 app.include_router(assistant_router)
 app.include_router(search_router)
+app.include_router(chat_router)
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
