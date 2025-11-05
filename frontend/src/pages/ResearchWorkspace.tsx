@@ -34,9 +34,27 @@ import {
 } from '@mui/icons-material';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { apiHelpers } from '../services/api';
+import { apiHelpers, apiEndpoints } from '../services/api';
 import ContextManagement from '../components/ContextManagement';
+import { SourcesPanel } from '../components/SourcesPanel';
+import { FocusedPapersBar } from '../components/FocusedPapersBar';
+import { SourcesSidebar } from '../components/SourcesSidebar';
 import '../styles/animations.css';
+
+interface Source {
+  arxiv_id: string;
+  title: string;
+  chunks_used: number;
+  citation_count: number;
+  is_seminal: boolean;
+  is_foundational: boolean;
+  cited_by_results: number;
+  chunk_details?: Array<{
+    section: string;
+    text_preview: string;
+    score: number;
+  }>;
+}
 
 interface Message {
   id: string;
@@ -45,6 +63,12 @@ interface Message {
   timestamp: Date;
   searchResults?: SearchResult[];
   sessionInfo?: any;
+  sources?: Source[];
+  graph_insights?: {
+    foundational_papers_added?: number;
+    total_papers?: number;
+    internal_citations?: number;
+  };
 }
 
 interface SessionInfo {
@@ -84,6 +108,9 @@ const ResearchWorkspace: React.FC = () => {
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const [backendStatus, setBackendStatus] = useState<'unknown' | 'connected' | 'disconnected'>('unknown');
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [focusedPapers, setFocusedPapers] = useState<Array<{arxiv_id: string, title: string, citations?: number}>>([]);
+  const [sourcesSidebarOpen, setSourcesSidebarOpen] = useState(false);
+  const [selectedSources, setSelectedSources] = useState<Source[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -131,7 +158,59 @@ const ResearchWorkspace: React.FC = () => {
 
   useEffect(() => {
     loadSessionInfo();
+    loadFocusedPapers();
   }, [chatId]);
+  
+  const loadFocusedPapers = async () => {
+    try {
+      const response = await apiEndpoints.getFocusedPapers(chatId);
+      if (response.data && response.data.focused_papers) {
+        setFocusedPapers(response.data.focused_papers);
+      }
+    } catch (error) {
+      console.error('Failed to load focused papers:', error);
+    }
+  };
+  
+  const handleFocusPaper = async (arxivId: string, title: string) => {
+    try {
+      await apiEndpoints.addFocusedPaper(chatId, { arxiv_id: arxivId, title });
+      setFocusedPapers(prev => [...prev, { arxiv_id: arxivId, title }]);
+    } catch (error) {
+      console.error('Failed to focus paper:', error);
+    }
+  };
+  
+  const handleUnfocusPaper = async (arxivId: string) => {
+    try {
+      await apiEndpoints.removeFocusedPaper(chatId, arxivId);
+      setFocusedPapers(prev => prev.filter(p => p.arxiv_id !== arxivId));
+    } catch (error) {
+      console.error('Failed to unfocus paper:', error);
+    }
+  };
+  
+  const handleClearFocus = async () => {
+    try {
+      await apiEndpoints.clearFocusedPapers(chatId);
+      setFocusedPapers([]);
+    } catch (error) {
+      console.error('Failed to clear focus:', error);
+    }
+  };
+
+  const handleOpenSources = (sources: Source[]) => {
+    const normalizedSources = sources.map(source => ({
+      ...source,
+      chunk_details: source.chunk_details || []
+    }));
+    setSelectedSources(normalizedSources);
+    setSourcesSidebarOpen(true);
+  };
+
+  const handleCloseSources = () => {
+    setSourcesSidebarOpen(false);
+  };
 
   const handleScroll = () => {
     // this for the future
@@ -164,6 +243,8 @@ const ResearchWorkspace: React.FC = () => {
           timestamp: new Date(),
           searchResults: data.search_results,
           sessionInfo: data.session_info,
+          sources: data.sources || [],
+          graph_insights: data.graph_insights || {},
         };
 
         setMessages(prev => [...prev, assistantMessage]);
@@ -367,6 +448,13 @@ const ResearchWorkspace: React.FC = () => {
                 background: '#F8FAFC',
               }}
             >
+              {/* Focused Papers Bar */}
+              <FocusedPapersBar
+                focusedPapers={focusedPapers}
+                onRemove={handleUnfocusPaper}
+                onClearAll={handleClearFocus}
+              />
+              
               {messages.map((message) => (
                 <Fade in={true} timeout={300} key={message.id}>
                   <Box
@@ -433,6 +521,42 @@ const ResearchWorkspace: React.FC = () => {
                           
                           {message.searchResults && renderSearchResults(message.searchResults)}
                         </Paper>
+                        
+                        {/* Sources Button - Opens Sidebar */}
+                        {message.type === 'assistant' && message.sources && message.sources.length > 0 && (
+                          <Box sx={{ mt: 1 }}>
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              startIcon={<ArticleIcon />}
+                              onClick={() => handleOpenSources(message.sources || [])}
+                              sx={{
+                                borderRadius: 2,
+                                textTransform: 'none',
+                                bgcolor: 'background.paper',
+                                '&:hover': {
+                                  bgcolor: 'primary.50',
+                                  borderColor: 'primary.main',
+                                },
+                              }}
+                            >
+                              📚 View Sources ({message.sources.length} {message.sources.length === 1 ? 'paper' : 'papers'})
+                            </Button>
+                          </Box>
+                        )}
+                        
+                        {/* Graph Insights Alert */}
+                        {message.type === 'assistant' && message.graph_insights && message.graph_insights.foundational_papers_added && message.graph_insights.foundational_papers_added > 0 && (
+                          <Box sx={{ mt: 1 }}>
+                            <Paper elevation={0} sx={{ p: 1.5, bgcolor: 'info.50', border: '1px solid', borderColor: 'info.200' }}>
+                              <Typography variant="caption" color="info.main">
+                                💡 <strong>Graph Discovery:</strong> Added {message.graph_insights.foundational_papers_added} foundational paper(s) 
+                                cited by {message.graph_insights.internal_citations || 'multiple'} papers in results
+                              </Typography>
+                            </Paper>
+                          </Box>
+                        )}
+                        
                         <Typography 
                           variant="caption" 
                           sx={{ 
@@ -848,6 +972,15 @@ const ResearchWorkspace: React.FC = () => {
           }}
         />
       </Drawer>
+
+      {/* Sources Sidebar - Opens on right */}
+      <SourcesSidebar
+        open={sourcesSidebarOpen}
+        onClose={handleCloseSources}
+        sources={selectedSources as any}
+        onFocusPaper={handleFocusPaper}
+        focusedPapers={focusedPapers}
+      />
     </Box>
   );
 };

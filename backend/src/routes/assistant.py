@@ -13,15 +13,6 @@ logger.info("Initializing BaseAgent for assistant routes")
 retrieval_agent = BaseAgent()
 logger.info("BaseAgent initialized successfully")
 
-@router.get("/test")
-async def test_assistant():
-    """Quick test endpoint to verify assistant is working."""
-    return {
-        "status": "Assistant is ready",
-        "message": "This is a simple test response",
-        "timestamp": "2024-01-01T00:00:00Z"
-    }
-
 class QueryRequest(BaseModel):
     """Request model for agent queries."""
     query: str = Field(..., description="User's question or request")
@@ -62,13 +53,25 @@ async def query_agent(
         
         session_info = await retrieval_agent.get_session_info(chat_id)
         
-        return {
-            "final_output": result,
-            "status": "success",
-            "chat_id": chat_id,
-            "conversation_type": conversation_type,
-            "session_info": session_info
-        }
+        if isinstance(result, dict):
+            return {
+                "final_output": result.get("response", result.get("final_output", "")),
+                "sources": result.get("sources", []),
+                "graph_insights": result.get("graph_insights", {}),
+                "tool_calls": result.get("tool_calls", []),
+                "status": "success",
+                "chat_id": chat_id,
+                "conversation_type": conversation_type,
+                "session_info": session_info
+            }
+        else:
+            return {
+                "final_output": result,
+                "status": "success",
+                "chat_id": chat_id,
+                "conversation_type": conversation_type,
+                "session_info": session_info
+            }
     except asyncio.TimeoutError:
         raise HTTPException(
             status_code=408, 
@@ -98,13 +101,25 @@ async def query_agent_post(request: QueryRequest):
         logger.info(f"✅ Query processed successfully for {request.chat_id}")
         logger.info(f"📊 Session: {session_info.get('user_turns', 0)} turns, strategy: {session_info.get('current_strategy', 'unknown')}")
         
-        return {
-            "final_output": result,
-            "status": "success",
-            "chat_id": request.chat_id,
-            "conversation_type": request.conversation_type,
-            "session_info": session_info
-        }
+        if isinstance(result, dict):
+            return {
+                "final_output": result.get("response", result.get("final_output", "")),
+                "sources": result.get("sources", []),
+                "graph_insights": result.get("graph_insights", {}),
+                "tool_calls": result.get("tool_calls", []),
+                "status": "success",
+                "chat_id": request.chat_id,
+                "conversation_type": request.conversation_type,
+                "session_info": session_info
+            }
+        else:
+            return {
+                "final_output": result,
+                "status": "success",
+                "chat_id": request.chat_id,
+                "conversation_type": request.conversation_type,
+                "session_info": session_info
+            }
     except asyncio.TimeoutError:
         logger.warning(f"⏱️ Query timeout for chat_id: {request.chat_id}")
         raise HTTPException(
@@ -203,3 +218,102 @@ async def list_available_strategies():
         "status": "success",
         "strategies": strategies
     }
+
+class FocusPaperRequest(BaseModel):
+    """Request model for focusing on a paper."""
+    arxiv_id: str = Field(..., description="arXiv ID of the paper to focus on")
+    title: str = Field(..., description="Title of the paper")
+
+@router.post("/session/{chat_id}/focus")
+async def add_focused_paper(chat_id: str, request: FocusPaperRequest):
+    """Add a paper to the focus list for this session."""
+    try:
+        retrieval_agent.add_focused_paper(chat_id, request.arxiv_id)
+        focused_papers = retrieval_agent.get_focused_papers(chat_id)
+        
+        logger.info(f"📌 Paper {request.arxiv_id} focused for chat {chat_id}")
+        
+        return {
+            "status": "success",
+            "message": f"Focused on paper: {request.title}",
+            "arxiv_id": request.arxiv_id,
+            "focused_count": len(focused_papers),
+            "focused_papers": focused_papers
+        }
+    except Exception as e:
+        logger.error(f"❌ Failed to focus paper: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to focus paper: {e}")
+
+@router.delete("/session/{chat_id}/focus/{arxiv_id}")
+async def remove_focused_paper(chat_id: str, arxiv_id: str):
+    """Remove a paper from the focus list."""
+    try:
+        retrieval_agent.remove_focused_paper(chat_id, arxiv_id)
+        focused_papers = retrieval_agent.get_focused_papers(chat_id)
+        
+        logger.info(f"📍 Paper {arxiv_id} unfocused for chat {chat_id}")
+        
+        return {
+            "status": "success",
+            "message": f"Unfocused paper: {arxiv_id}",
+            "arxiv_id": arxiv_id,
+            "focused_count": len(focused_papers),
+            "focused_papers": focused_papers
+        }
+    except Exception as e:
+        logger.error(f"❌ Failed to unfocus paper: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to unfocus paper: {e}")
+
+@router.delete("/session/{chat_id}/focus")
+async def clear_focused_papers(chat_id: str):
+    """Clear all focused papers for this session."""
+    try:
+        retrieval_agent.clear_focused_papers(chat_id)
+        
+        logger.info(f"🔄 Cleared all focused papers for chat {chat_id}")
+        
+        return {
+            "status": "success",
+            "message": "All focused papers cleared",
+            "chat_id": chat_id,
+            "focused_count": 0
+        }
+    except Exception as e:
+        logger.error(f"❌ Failed to clear focused papers: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear focused papers: {e}")
+
+@router.get("/session/{chat_id}/focus")
+async def get_focused_papers(chat_id: str):
+    """Get the list of currently focused papers for this session."""
+    try:
+        focused_ids = retrieval_agent.get_focused_papers(chat_id)
+        
+        papers = []
+        if focused_ids:
+            from src.services.knowledge_graph import Neo4jClient
+            try:
+                with Neo4jClient() as client:
+                    for arxiv_id in focused_ids:
+                        result = client.execute_query("""
+                            MATCH (p:Paper {arxiv_id: $id})
+                            RETURN p.title as title, p.citation_count as citations
+                        """, {"id": arxiv_id})
+                        if result:
+                            papers.append({
+                                "arxiv_id": arxiv_id,
+                                "title": result[0]["title"],
+                                "citations": result[0].get("citations", 0)
+                            })
+            except Exception as e:
+                logger.warning(f"⚠️ Could not fetch paper details from graph: {e}")
+                papers = [{"arxiv_id": arxiv_id, "title": arxiv_id} for arxiv_id in focused_ids]
+        
+        return {
+            "status": "success",
+            "chat_id": chat_id,
+            "focused_papers": papers,
+            "count": len(papers)
+        }
+    except Exception as e:
+        logger.error(f"❌ Failed to get focused papers: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get focused papers: {e}")

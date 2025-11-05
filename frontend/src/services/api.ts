@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { SearchRequest, EnhancedSearchResponse } from '../types/search';
 
 const api = axios.create({
   baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8000',
@@ -32,6 +33,24 @@ export const apiEndpoints = {
   
   listStrategies: () =>
     api.get('/assistant/strategies'),
+  
+  enhancedSearch: (data: SearchRequest) =>
+    api.post<EnhancedSearchResponse>('/search/enhanced', data),
+  
+  enhancedSearchGet: (query: string, limit: number = 10, includeFoundations: boolean = true) =>
+    api.get<EnhancedSearchResponse>(`/search/enhanced?query=${encodeURIComponent(query)}&limit=${limit}&include_foundations=${includeFoundations}`),
+  
+  addFocusedPaper: (chatId: string, data: { arxiv_id: string; title: string }) =>
+    api.post(`/assistant/session/${chatId}/focus`, data),
+  
+  removeFocusedPaper: (chatId: string, arxivId: string) =>
+    api.delete(`/assistant/session/${chatId}/focus/${arxivId}`),
+  
+  clearFocusedPapers: (chatId: string) =>
+    api.delete(`/assistant/session/${chatId}/focus`),
+  
+  getFocusedPapers: (chatId: string) =>
+    api.get(`/assistant/session/${chatId}/focus`),
 };
 
 export const apiHelpers = {
@@ -135,6 +154,21 @@ export const apiHelpers = {
         status: 'error',
         services: {},
         version: 'unknown',
+      };
+    }
+  },
+
+  enhancedSearch: async (request: SearchRequest) => {
+    try {
+      const response = await apiEndpoints.enhancedSearch(request);
+      return {
+        success: true,
+        data: response.data,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.response?.data?.detail || 'Failed to perform search',
       };
     }
   },

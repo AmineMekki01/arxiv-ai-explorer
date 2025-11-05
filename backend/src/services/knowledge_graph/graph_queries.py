@@ -410,3 +410,124 @@ class GraphQueryService:
         except Exception as e:
             logger.error(f"Failed to get paper context: {e}")
             return {}
+    
+    def get_internal_citations(self, paper_ids: List[str]) -> List[Dict[str, Any]]:
+        """
+        Find citation relationships within a set of papers.
+        
+        Args:
+            paper_ids: List of arXiv IDs
+            
+        Returns:
+            List of citation edges between papers in the set
+        """
+        if not paper_ids:
+            return []
+        
+        query = """
+        MATCH (p1:Paper)-[:CITES]->(p2:Paper)
+        WHERE p1.arxiv_id IN $paper_ids 
+          AND p2.arxiv_id IN $paper_ids
+        RETURN p1.arxiv_id as source,
+               p2.arxiv_id as target,
+               p2.title as target_title
+        """
+        
+        try:
+            results = self.client.execute_query(query, {"paper_ids": paper_ids})
+            logger.info(f"Found {len(results)} internal citations among {len(paper_ids)} papers")
+            return results
+        except Exception as e:
+            logger.error(f"Failed to get internal citations: {e}")
+            return []
+    
+    def find_missing_foundations(
+        self,
+        paper_ids: List[str],
+        min_citations: int = 3,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Find foundational papers cited by many papers in the set but not in the set themselves.
+        
+        Args:
+            paper_ids: List of arXiv IDs in current result set
+            min_citations: Minimum number of citations from result set
+            limit: Maximum foundations to return
+            
+        Returns:
+            List of foundational papers with citation counts
+        """
+        if not paper_ids:
+            return []
+        
+        query = """
+        MATCH (result:Paper)-[:CITES]->(cited:Paper)
+        WHERE result.arxiv_id IN $paper_ids 
+          AND NOT cited.arxiv_id IN $paper_ids
+        WITH cited, count(result) as citation_count
+        WHERE citation_count >= $min_citations
+        RETURN cited.arxiv_id as arxiv_id,
+               cited.title as title,
+               toString(cited.published_date) as published_date,
+               cited.citation_count as total_citations,
+               citation_count as cited_by_results
+        ORDER BY citation_count DESC, cited.citation_count DESC
+        LIMIT $limit
+        """
+        
+        parameters = {
+            "paper_ids": paper_ids,
+            "min_citations": min_citations,
+            "limit": limit
+        }
+        
+        try:
+            results = self.client.execute_query(query, parameters)
+            logger.info(f"Found {len(results)} missing foundations for {len(paper_ids)} papers")
+            return results
+        except Exception as e:
+            logger.error(f"Failed to find missing foundations: {e}")
+            return []
+    
+    def get_papers_metadata(self, paper_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Get graph metadata for a batch of papers.
+        
+        Args:
+            paper_ids: List of arXiv IDs
+            
+        Returns:
+            Dictionary mapping arxiv_id to metadata
+        """
+        if not paper_ids:
+            return {}
+        
+        query = """
+        MATCH (p:Paper)
+        WHERE p.arxiv_id IN $paper_ids
+        OPTIONAL MATCH (citing:Paper)-[:CITES]->(p)
+        RETURN p.arxiv_id as arxiv_id,
+               p.citation_count as citation_count,
+               p.influential_citation_count as influential_citation_count,
+               count(DISTINCT citing) as cited_by_count,
+               p.published_date as published_date
+        """
+        
+        try:
+            results = self.client.execute_query(query, {"paper_ids": paper_ids})
+            metadata_dict = {}
+            for row in results:
+                arxiv_id = row["arxiv_id"]
+                metadata_dict[arxiv_id] = {
+                    "citation_count": row.get("citation_count", 0),
+                    "influential_citation_count": row.get("influential_citation_count", 0),
+                    "cited_by_count": row.get("cited_by_count", 0),
+                    "is_seminal": row.get("citation_count", 0) > 100,
+                    "published_date": str(row.get("published_date", ""))
+                }
+            logger.info(f"Retrieved metadata for {len(metadata_dict)} papers")
+            return metadata_dict
+        except Exception as e:
+            logger.error(f"Failed to get papers metadata: {e}")
+            return {}
