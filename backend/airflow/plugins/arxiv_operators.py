@@ -409,6 +409,7 @@ class ChunkDocumentsOperator(BaseOperator):
                         "affiliations": p.get("affiliations", []),
                         "chunk_index": idx,
                         "chunk_text": chunk.text if hasattr(chunk, 'text') else str(chunk),
+                        "heading": chunk.meta.headings[0]
                     }
                     all_chunks.append(chunk_dict)
                 

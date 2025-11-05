@@ -89,6 +89,8 @@ class BuildKnowledgeGraphOperator(BaseOperator):
         else:
             papers = self._load_papers_from_db()
         
+        papers = self._normalize_papers(papers)
+
         if not papers:
             self.log.info("No papers to process")
             return {"processed": 0, "success": 0, "failed": 0}
@@ -104,6 +106,83 @@ class BuildKnowledgeGraphOperator(BaseOperator):
         
         return results
     
+    def _normalize_papers(self, papers) -> List[Paper]:
+        """Normalize XCom payloads to ORM Paper objects.
+        Expected shape (from upstream):
+          { 'persisted': int, 'skipped': int, 'papers': [ { 'arxiv_id': str }, ... ] }
+        Falls back to handling lists of strings/dicts/ORM Paper.
+        """
+        if not papers:
+            return []
+
+        if isinstance(papers, dict) and 'papers' in papers and isinstance(papers['papers'], (list, tuple)):
+            raw_items = papers['papers']
+            arxiv_ids = [self._normalize_arxiv_id(item.get('arxiv_id')) for item in raw_items if isinstance(item, dict) and item.get('arxiv_id')]
+        else:
+            try:
+                seq = list(papers) if not isinstance(papers, (list, tuple)) else papers
+            except Exception:
+                return []
+
+            if not seq:
+                return []
+
+            if isinstance(seq[0], Paper):
+                return list(seq)
+
+            arxiv_ids: List[str] = []
+            if isinstance(seq[0], str):
+                arxiv_ids = [self._normalize_arxiv_id(p) for p in seq if isinstance(p, str) and p]
+            elif isinstance(seq[0], dict):
+                arxiv_ids = [self._normalize_arxiv_id(p.get('arxiv_id')) for p in seq if isinstance(p, dict) and p.get('arxiv_id')]
+            else:
+                try:
+                    arxiv_ids = [self._normalize_arxiv_id(getattr(p, 'arxiv_id')) for p in seq if getattr(p, 'arxiv_id', None)]
+                    if arxiv_ids and isinstance(seq[0], Paper):
+                        return list(seq)
+                except Exception:
+                    pass
+
+        if not arxiv_ids:
+            self.log.warning("Unsupported papers payload type for normalization; skipping.")
+            return []
+
+        def _strip_version(s: str) -> str:
+            if 'v' in s:
+                parts = s.rsplit('v', 1)
+                if parts[1].isdigit():
+                    return parts[0]
+            return s
+
+        query_ids = list({*(arxiv_ids), *(_strip_version(a) for a in arxiv_ids if a)})
+        with get_sync_session() as session:
+            db_papers = session.query(Paper).filter(Paper.arxiv_id.in_(query_ids)).all()
+        by_id = {p.arxiv_id: p for p in db_papers}
+
+        normalized: List[Paper] = []
+        missing: List[str] = []
+        for a in arxiv_ids:
+            if a in by_id:
+                normalized.append(by_id[a])
+            else:
+                av = _strip_version(a)
+                if av in by_id:
+                    normalized.append(by_id[av])
+                else:
+                    missing.append(a)
+        if missing:
+            self.log.warning(f"Some arxiv_ids not found in DB and will be skipped: {missing}")
+        return normalized
+
+    @staticmethod
+    def _normalize_arxiv_id(raw: str | None) -> str | None:
+        if not raw:
+            return None
+        s = str(raw).strip()
+        if s.lower().startswith('arxiv:'):
+            s = s.split(':', 1)[1]
+        return s
+
     def _load_papers_from_db(self) -> List[Paper]:
         with get_sync_session() as session:
             query = session.query(Paper).filter(Paper.s2_paper_id.isnot(None))
@@ -148,7 +227,8 @@ class BuildKnowledgeGraphOperator(BaseOperator):
                 
                 for idx, paper in enumerate(papers, 1):
                     try:
-                        self.log.info(f"[{idx}/{len(papers)}] Building graph for {paper.arxiv_id}")
+                        arxiv_id = getattr(paper, 'arxiv_id', None) or str(paper)
+                        self.log.info(f"[{idx}/{len(papers)}] Building graph for {arxiv_id}")
                         
                         result = builder.build_full_graph(paper)
                         
@@ -157,14 +237,14 @@ class BuildKnowledgeGraphOperator(BaseOperator):
                         success_count += 1
                         
                         self.log.info(
-                            f"{paper.arxiv_id}: "
+                            f"{arxiv_id}: "
                             f"+{result.get('nodes_created', 0)} nodes, "
                             f"+{result.get('relationships_created', 0)} relationships"
                         )
                         
                     except Exception as e:
                         failed_count += 1
-                        self.log.error(f"Failed to build graph for {paper.arxiv_id}: {e}")
+                        self.log.error(f"Failed to build graph for {getattr(paper, 'arxiv_id', None) or str(paper)}: {e}")
                 
                 stats = client.get_stats()
                 self.log.info(f"Final graph stats: {stats}")

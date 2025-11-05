@@ -7,10 +7,9 @@ import asyncio
 from typing import Dict, List, Optional
 import httpx
 from src.core import logger
+from src.config import get_settings
 
-
-S2_BASE = "https://api.semanticscholar.org/graph/v1"
-
+settings = get_settings()
 
 def normalize_arxiv_id(raw: str) -> Optional[str]:
     """Normalize arXiv ID: strip URL and version suffix."""
@@ -23,9 +22,9 @@ def normalize_arxiv_id(raw: str) -> Optional[str]:
 class CitationExtractor:
     """Extract citations and references from Semantic Scholar."""
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self):
         """Initialize with optional Semantic Scholar API key for higher rate limits."""
-        headers = {"x-api-key": api_key} if api_key else {}
+        headers = {"x-api-key": settings.s2_api_key} if settings.s2_api_key else {}
         self.client = httpx.AsyncClient(timeout=30.0, headers=headers)
     
     async def _s2_get(self, url: str, params: dict, max_retries: int = 3) -> dict:
@@ -40,9 +39,8 @@ class CitationExtractor:
             
             if r.status_code in (429, 500, 502, 503):
                 if attempt < max_retries:
-                    delay = (2 ** attempt) + random.uniform(0, 1)
-                    logger.warning(f"S2 API {r.status_code}, retry {attempt + 1}/{max_retries} after {delay:.1f}s")
-                    await asyncio.sleep(delay)
+                    logger.warning(f"S2 API {r.status_code}, retry {attempt + 1}/{max_retries} after {settings.s2_api_delay_time:.1f}s")
+                    await asyncio.sleep(settings.s2_api_delay_time)
                     continue
             
             r.raise_for_status()
@@ -53,7 +51,7 @@ class CitationExtractor:
     async def _fetch_paper_core(self, arxiv_id: str) -> dict:
         """Fetch paper metadata and counts."""
         fields = "paperId,citationCount,referenceCount,influentialCitationCount,title,externalIds"
-        url = f"{S2_BASE}/paper/arXiv:{arxiv_id}"
+        url = f"{settings.s2_base}/paper/arXiv:{arxiv_id}"
         return await self._s2_get(url, {"fields": fields})
     
     async def _fetch_list_paginated(
@@ -74,7 +72,7 @@ class CitationExtractor:
         else:
             raise ValueError("rel must be 'references' or 'citations'")
         
-        url = f"{S2_BASE}/paper/{paper_id}/{rel}"
+        url = f"{settings.s2_base}/paper/{paper_id}/{rel}"
         results = []
         offset = 0
         
