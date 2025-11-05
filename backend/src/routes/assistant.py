@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
 from src.agents.base_agent import retrieval_agent
 from src.core import logger
+from src.routes.auth import require_auth
+from src.models.user import User
+from src.services.chat_store import ChatStore
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
+chat_store = ChatStore()
 
 class QueryRequest(BaseModel):
     """Request model for agent queries."""
@@ -19,10 +23,13 @@ class ContextStrategyRequest(BaseModel):
     strategy: str = Field(..., description="New context strategy: trimming, summarization, hybrid")
 
 @router.get("/session/{chat_id}")
-async def get_session_info(chat_id: str):
+async def get_session_info(chat_id: str, current_user: User = Depends(require_auth)):
     """Get detailed information about a conversation session."""
     logger.info(f"Getting session info for chat_id: {chat_id}")
     try:
+        chat = chat_store.get_chat(chat_id, user_id=str(current_user.id))
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
         session_info = await retrieval_agent.get_session_info(chat_id)
         logger.info(f"Session info retrieved: {session_info.get('status', 'unknown')} - {session_info.get('total_items', 0)} items")
         return {
@@ -38,9 +45,13 @@ async def query_agent(
     q: str = Query(..., description="User query"),
     chat_id: str = Query(..., description="Chat ID"),
     conversation_type: str = Query(default="research", description="Type of conversation: research, quick, analysis, general"),
+    current_user: User = Depends(require_auth)
 ):
     """Process a user query with intelligent context management."""
     try:
+        chat = chat_store.get_chat(chat_id, user_id=str(current_user.id))
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
         result = await asyncio.wait_for(
             retrieval_agent.process_query(q, chat_id, conversation_type),
             timeout=90.0
@@ -76,12 +87,15 @@ async def query_agent(
         raise HTTPException(status_code=500, detail=f"Query processing failed: {e}")
 
 @router.post("/query")
-async def query_agent_post(request: QueryRequest):
+async def query_agent_post(request: QueryRequest, current_user: User = Depends(require_auth)):
     """Process a user query with intelligent context management (POST version)."""
     logger.info(f"POST /query - chat_id: {request.chat_id}, type: {request.conversation_type}")
     logger.info(f"Query: {request.query[:100]}{'...' if len(request.query) > 100 else ''}")
     
     try:
+        chat = chat_store.get_chat(request.chat_id, user_id=str(current_user.id))
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
         result = await asyncio.wait_for(
             retrieval_agent.process_query(
                 request.query, 
@@ -220,9 +234,12 @@ class FocusPaperRequest(BaseModel):
     title: str = Field(..., description="Title of the paper")
 
 @router.post("/session/{chat_id}/focus")
-async def add_focused_paper(chat_id: str, request: FocusPaperRequest):
+async def add_focused_paper(chat_id: str, request: FocusPaperRequest, current_user: User = Depends(require_auth)):
     """Add a paper to the focus list for this session."""
     try:
+        chat = chat_store.get_chat(chat_id, user_id=str(current_user.id))
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
         retrieval_agent.add_focused_paper(chat_id, request.arxiv_id)
         focused_papers = retrieval_agent.get_focused_papers(chat_id)
         
@@ -240,9 +257,12 @@ async def add_focused_paper(chat_id: str, request: FocusPaperRequest):
         raise HTTPException(status_code=500, detail=f"Failed to focus paper: {e}")
 
 @router.delete("/session/{chat_id}/focus/{arxiv_id}")
-async def remove_focused_paper(chat_id: str, arxiv_id: str):
+async def remove_focused_paper(chat_id: str, arxiv_id: str, current_user: User = Depends(require_auth)):
     """Remove a paper from the focus list."""
     try:
+        chat = chat_store.get_chat(chat_id, user_id=str(current_user.id))
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
         retrieval_agent.remove_focused_paper(chat_id, arxiv_id)
         focused_papers = retrieval_agent.get_focused_papers(chat_id)
         
@@ -260,9 +280,12 @@ async def remove_focused_paper(chat_id: str, arxiv_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to unfocus paper: {e}")
 
 @router.delete("/session/{chat_id}/focus")
-async def clear_focused_papers(chat_id: str):
+async def clear_focused_papers(chat_id: str, current_user: User = Depends(require_auth)):
     """Clear all focused papers for this session."""
     try:
+        chat = chat_store.get_chat(chat_id, user_id=str(current_user.id))
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
         retrieval_agent.clear_focused_papers(chat_id)
         
         logger.info(f"🔄 Cleared all focused papers for chat {chat_id}")
@@ -278,9 +301,12 @@ async def clear_focused_papers(chat_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to clear focused papers: {e}")
 
 @router.get("/session/{chat_id}/focus")
-async def get_focused_papers(chat_id: str):
+async def get_focused_papers(chat_id: str, current_user: User = Depends(require_auth)):
     """Get the list of currently focused papers for this session."""
     try:
+        chat = chat_store.get_chat(chat_id, user_id=str(current_user.id))
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
         focused_ids = retrieval_agent.get_focused_papers(chat_id)
         
         papers = []

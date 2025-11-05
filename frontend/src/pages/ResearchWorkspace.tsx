@@ -45,6 +45,7 @@ import { SourcesPanel } from '../components/SourcesPanel';
 import { FocusedPapersBar } from '../components/FocusedPapersBar';
 import { SourcesSidebar } from '../components/SourcesSidebar';
 import '../styles/animations.css';
+import { useParams, useNavigate } from 'react-router-dom';
 
 interface Source {
   arxiv_id: string;
@@ -98,6 +99,8 @@ interface SearchResult {
 }
 
 const ResearchWorkspace: React.FC = () => {
+  const navigate = useNavigate();
+  const { chatId: routeChatId } = useParams();
   const [chatId, setChatId] = useState<string>('');
   const [isInitialized, setIsInitialized] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
@@ -190,49 +193,27 @@ const ResearchWorkspace: React.FC = () => {
   }, [focusedPapers, chatId]);
 
   useEffect(() => {
-    const initializeChat = async () => {
+    const initialize = async () => {
       try {
         const res = await apiHelpers.listChats();
         const existingChats = res.success ? (res.items || []) : [];
         setChats(existingChats);
 
-        const savedChatId = sessionStorage.getItem('current_chat_id');
-        
-        if (savedChatId && existingChats.some((c: any) => c.id === savedChatId)) {
-          setChatId(savedChatId);
-          await loadMessages(savedChatId);
-        } 
-        else if (existingChats.length > 0) {
-          const mostRecent = existingChats[0];
-          setChatId(mostRecent.id);
-          sessionStorage.setItem('current_chat_id', mostRecent.id);
-          await loadMessages(mostRecent.id);
-        } 
-        else {
-          const createRes = await apiHelpers.createChat();
-          if (createRes.success && createRes.chat?.id) {
-            const newChatId = createRes.chat.id;
-            setChatId(newChatId);
-            sessionStorage.setItem('current_chat_id', newChatId);
-            setChats([createRes.chat]);
-            setMessages([{
-              id: '1',
-              type: 'assistant',
-              content: 'Hello! I\'m your research assistant. I can help you find relevant papers, analyze research, and explore academic literature. What would you like to know?',
-              timestamp: new Date(),
-            }]);
-          }
+        if (routeChatId && existingChats.some((c: any) => c.id === routeChatId)) {
+          setChatId(routeChatId);
+          await loadMessages(routeChatId);
+        } else {
+          setChatId('');
         }
-        
+
         setIsInitialized(true);
       } catch (error) {
-        console.error('Failed to initialize chat:', error);
+        console.error('Failed to initialize workspace:', error);
         setIsInitialized(true);
       }
     };
-
-    initializeChat();
-  }, []); // Run once on mount
+    initialize();
+  }, [routeChatId]);
 
   useEffect(() => {
     if (!isInitialized || !chatId) return;
@@ -261,6 +242,7 @@ const ResearchWorkspace: React.FC = () => {
   }, [chatId]);
   
   const loadFocusedPapers = async () => {
+    if (!chatId) return;
     try {
       const response = await apiEndpoints.getFocusedPapers(chatId);
       if (response.data && response.data.focused_papers) {
@@ -282,6 +264,7 @@ const ResearchWorkspace: React.FC = () => {
   };
   
   const handleFocusPaper = async (arxivId: string, title: string) => {
+    if (!chatId) return;
     try {
       const alreadyFocused = focusedPapers.some(p => p.arxiv_id === arxivId);
       if (alreadyFocused) {
@@ -303,6 +286,7 @@ const ResearchWorkspace: React.FC = () => {
   };
   
   const handleUnfocusPaper = async (arxivId: string) => {
+    if (!chatId) return;
     try {
       await apiEndpoints.removeFocusedPaper(chatId, arxivId);
       
@@ -315,6 +299,7 @@ const ResearchWorkspace: React.FC = () => {
   };
   
   const handleClearFocus = async () => {
+    if (!chatId) return;
     try {
       await apiEndpoints.clearFocusedPapers(chatId);
       setFocusedPapers([]);
@@ -338,6 +323,7 @@ const ResearchWorkspace: React.FC = () => {
     if (!nextChatId || nextChatId === chatId) return;
     sessionStorage.setItem('current_chat_id', nextChatId);
     setChatId(nextChatId);
+    navigate(`/research/${nextChatId}`);
     await loadMessages(nextChatId);
     await loadSessionInfo();
     await loadFocusedPapers();
@@ -356,6 +342,7 @@ const ResearchWorkspace: React.FC = () => {
       const res = await apiHelpers.createChat(chatName);
       if (res.success && res.chat?.id) {
         await loadChats();
+        navigate(`/research/${res.chat.id}`);
         await handleSwitchChat(res.chat.id);
       } else {
         console.error('Failed to create chat:', res.error);
@@ -418,6 +405,7 @@ const ResearchWorkspace: React.FC = () => {
   };
 
   const handleSendMessage = async () => {
+    if (!chatId) return;
     if (!currentMessage.trim() || isLoading) return;
     const clientMsgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const userMessage: Message = {
@@ -684,14 +672,37 @@ const ResearchWorkspace: React.FC = () => {
                 background: '#F8FAFC',
               }}
             >
-              {/* Focused Papers Bar */}
-              <FocusedPapersBar
-                focusedPapers={focusedPapers}
-                onRemove={handleUnfocusPaper}
-                onClearAll={handleClearFocus}
-              />
-              
-              {messages.map((message) => (
+              {chatId && (
+                <FocusedPapersBar
+                  focusedPapers={focusedPapers}
+                  onRemove={handleUnfocusPaper}
+                  onClearAll={handleClearFocus}
+                />
+              )}
+
+              {!chatId && (
+                <Box sx={{
+                  height: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexDirection: 'column',
+                  gap: 2,
+                  color: 'text.secondary',
+                }}>
+                  <Typography variant="h6" sx={{ color: 'text.primary', fontWeight: 600 }}>
+                    No chat selected
+                  </Typography>
+                  <Typography variant="body2">
+                    Create your first chat to get started
+                  </Typography>
+                  <Button variant="contained" onClick={handleNewChat}>
+                    Create Chat
+                  </Button>
+                </Box>
+              )}
+
+              {chatId && messages.map((message) => (
                 <Fade in={true} timeout={300} key={message.id}>
                   <Box
                     sx={{

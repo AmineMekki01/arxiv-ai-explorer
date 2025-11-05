@@ -44,7 +44,7 @@ class Retriever:
         if include_sections:
             filter_conditions.append(
                 qmodels.FieldCondition(
-                    key="section_title",
+                    key="heading",
                     match=qmodels.MatchAny(any=include_sections)
                 )
             )
@@ -53,7 +53,7 @@ class Retriever:
             filters = qmodels.Filter(
                 must=filter_conditions if filter_conditions else None,
                 must_not=[qmodels.FieldCondition(
-                    key="section_title",
+                    key="heading",
                     match=qmodels.MatchAny(any=exclude_sections)
                 )]
             )
