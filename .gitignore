@@ -5,6 +5,7 @@ backend/notebooks/notebook_setup.py
 archive/
 logs/
 airflow.cfg
+features_planning.md
 # Data directories
 data/
 plan.md

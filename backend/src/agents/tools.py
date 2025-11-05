@@ -12,10 +12,19 @@ graph_retriever = GraphEnhancedRetriever()
 
 _last_tool_result = None
 _last_tool_timestamp = None
+_last_focused_papers = None
 
 def get_last_tool_result() -> Optional[Dict[str, Any]]:
     """Get the last tool result from cache."""
     return _last_tool_result
+
+def clear_tool_cache() -> None:
+    """Clear the tool result cache."""
+    global _last_tool_result, _last_tool_timestamp, _last_focused_papers
+    _last_tool_result = None
+    _last_tool_timestamp = None
+    _last_focused_papers = None
+    logger.info("Cleared tool cache")
 
 @function_tool
 def search_papers(
@@ -134,7 +143,7 @@ def search_papers_with_graph(
         
         if filter_arxiv_ids:
             papers = [p for p in papers if p.get('arxiv_id') in filter_arxiv_ids]
-            logger.info(f"📌 Filtered to {len(papers)} focused papers: {filter_arxiv_ids}")
+            logger.info(f"Filtered to {len(papers)} focused papers: {filter_arxiv_ids}")
         
         sources = []
         for paper in papers:
@@ -165,7 +174,7 @@ def search_papers_with_graph(
             }
             sources.append(source)
         
-        logger.info(f" Built {len(sources)} sources with metadata")
+        logger.info(f"Built {len(sources)} sources with metadata")
         
         tool_result = {
             "results": papers,
@@ -176,16 +185,106 @@ def search_papers_with_graph(
         global _last_tool_result, _last_tool_timestamp
         _last_tool_result = tool_result
         _last_tool_timestamp = datetime.now()
-        logger.info(f" Cached tool result with {len(sources)} sources")
+        logger.info(f"Cached tool result with {len(sources)} sources")
         
         return tool_result
     except Exception as e:
-        logger.error(f" Graph search failed: {e}")
-        logger.info(" Falling back to regular search")
+        logger.error(f"Graph search failed: {e}")
+        logger.info("Falling back to regular search")
         
         results = retriever.vector_search(query, limit=limit)
         return {
             "results": results,
             "sources": [],
             "fallback": True
+        }
+
+@function_tool
+def get_paper_details(arxiv_id: str) -> Dict[str, Any]:
+    """
+    Fetch detailed information about a specific paper by its arXiv ID.
+    
+    Use this tool when:
+    - User asks about a specific paper by ID (e.g., "tell me about arXiv:2510.24450")
+    - User says "this paper" or "the paper" when they have a paper focused
+    - You need comprehensive details (abstract, authors, citations, content)
+    
+    Args:
+        arxiv_id: The arXiv ID (e.g., "2510.24450v1" or "2510.24450")
+    
+    Returns:
+        Dictionary with paper metadata, abstract, and sample content chunks
+    """
+    try:
+        logger.info(f"Fetching detailed paper info for {arxiv_id}")
+        
+        clean_id = arxiv_id.replace("arXiv:", "").replace("arxiv:", "").strip()
+        
+        from src.database import get_sync_session
+        from src.models.paper import Paper
+        from src.services.knowledge_graph import Neo4jClient
+        
+        paper_metadata = None
+        with get_sync_session() as db:
+            paper_metadata = db.query(Paper).filter(Paper.arxiv_id == clean_id).first()
+        
+        if not paper_metadata:
+            return {
+                "error": f"Paper {clean_id} not found in database",
+                "suggestion": "Try searching for it using search_papers_with_graph instead"
+            }
+        
+        citation_count = 0
+        is_seminal = False
+        try:
+            with Neo4jClient() as client:
+                result = client.execute_query(
+                    """
+                    MATCH (p:Paper {arxiv_id: $arxiv_id})
+                    OPTIONAL MATCH (cited:Paper)-[:CITES]->(p)
+                    WITH p, count(DISTINCT cited) as citation_count
+                    RETURN citation_count,
+                           CASE WHEN citation_count > 100 THEN true ELSE false END as is_seminal
+                    """,
+                    {"arxiv_id": clean_id}
+                )
+                if result and len(result) > 0:
+                    citation_count = result[0].get("citation_count", 0)
+                    is_seminal = result[0].get("is_seminal", False)
+        except Exception as e:
+            logger.warning(f"Could not get citation data: {e}")
+        
+        chunks = retriever.vector_search(
+            clean_id, 
+            limit=5,
+            exclude_sections=["References", "Bibliography"]
+        )
+        
+        result = {
+            "arxiv_id": paper_metadata.arxiv_id,
+            "title": paper_metadata.title,
+            "abstract": paper_metadata.abstract,
+            "authors": paper_metadata.authors if isinstance(paper_metadata.authors, list) else [],
+            "published_date": paper_metadata.published_date.isoformat() if paper_metadata.published_date else "",
+            "primary_category": paper_metadata.primary_category,
+            "categories": paper_metadata.categories if isinstance(paper_metadata.categories, list) else [],
+            "citation_count": citation_count,
+            "is_seminal": is_seminal,
+            "sample_content": [
+                {
+                    "section": chunk.get("section_title", "Content"),
+                    "text": chunk.get("chunk_text", "")[:500]
+                }
+                for chunk in chunks[:3]
+            ] if chunks else []
+        }
+        
+        logger.info(f"Successfully fetched details for {clean_id}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to get paper details: {e}")
+        return {
+            "error": f"Failed to fetch paper: {str(e)}",
+            "arxiv_id": arxiv_id
         }

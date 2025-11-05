@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from agents import Agent, ModelSettings, Runner
 
-from src.agents.tools import search_papers, search_papers_with_graph
+from src.agents.tools import search_papers, search_papers_with_graph, get_paper_details
 from src.agents.prompts import RESEARCH_ASSISTANT_PROMPT
 from src.agents.session_factory import SessionFactory, get_session_recommendations
 from src.agents.context_management import SessionABC
@@ -29,6 +29,7 @@ class BaseAgent:
         
         self._sessions: Dict[str, SessionABC] = {}
         self._focused_papers: Dict[str, list] = {}
+        self._last_focused_papers_snapshot: Dict[str, list] = {}
         
         self.conversations_dir = Path(self.settings.conversations_storage_path)
         self.conversations_dir.mkdir(exist_ok=True)
@@ -38,7 +39,7 @@ class BaseAgent:
             name="ResearchMind Assistant",
             instructions=RESEARCH_ASSISTANT_PROMPT,
             model=self.settings.openai_model,
-            tools=[search_papers, search_papers_with_graph],
+            tools=[search_papers, search_papers_with_graph, get_paper_details],
             model_settings=ModelSettings(
                 tool_choice="auto",
             ),
@@ -85,7 +86,7 @@ class BaseAgent:
             strategy_info = await session.get_strategy_info()
             info.update(strategy_info)
         
-        logger.debug(f"📊 Session info for {chat_id}: {info.get('user_turns', 0)} turns, {info.get('total_items', 0)} items")
+        logger.debug(f"Session info for {chat_id}: {info.get('user_turns', 0)} turns, {info.get('total_items', 0)} items")
         return info
     
     async def _prepare_context_for_agent(self, session: SessionABC, query: str) -> Dict[str, Any]:
@@ -128,15 +129,22 @@ class BaseAgent:
             Agent's response as a string
         """
         try:
-            logger.info(f"🔍 Processing query: chat_id={chat_id}, type={conversation_type}")
-            logger.debug(f"💬 Query text: {query[:150]}{'...' if len(query) > 150 else ''}")
+            logger.info(f"Processing query: chat_id={chat_id}, type={conversation_type}")
+            logger.debug(f"Query text: {query[:150]}{'...' if len(query) > 150 else ''}")
             
             session = self._get_or_create_session(chat_id, conversation_type)
             
             focused_papers = self.get_focused_papers(chat_id)
             
+            last_snapshot = self._last_focused_papers_snapshot.get(chat_id, [])
+            if sorted(last_snapshot) != sorted(focused_papers):
+                from src.agents.tools import clear_tool_cache
+                clear_tool_cache()
+                self._last_focused_papers_snapshot[chat_id] = focused_papers.copy() if focused_papers else []
+                logger.info(f"Focused papers changed for {chat_id} - cleared tool cache")
+            
             context = await self._prepare_context_for_agent(session, query)
-            logger.debug(f"📝 Context prepared: has_context={context['has_context']}, history_length={len(context['history'])}")
+            logger.debug(f"Context prepared: has_context={context['has_context']}, history_length={len(context['history'])}")
             
             if context["has_context"]:
                 recent_messages = context["history"][-2:] if len(context["history"]) >= 2 else context["history"]
@@ -145,37 +153,59 @@ class BaseAgent:
                     for msg in recent_messages
                 ])
                 agent_input = f"[Previous context: {len(context['history'])} messages]\n{context_summary}\n\nCurrent query: {query}"
-                logger.info(f"🧠 Using {len(context['history'])} messages as context")
+                logger.info(f"Using {len(context['history'])} messages as context")
             else:
                 agent_input = query
-                logger.info("🆕 No previous context - fresh query")
+                logger.info("No previous context - fresh query")
             
             if focused_papers:
-                focus_instruction = f"\n\n📌 IMPORTANT - FOCUSED PAPERS MODE:\nThe user has focused on these specific papers: {', '.join(focused_papers)}\nYou MUST prioritize information from these papers in your response. When searching, filter results to these arXiv IDs."
+                papers_info = []
+                try:
+                    for paper_id in focused_papers:
+                        from src.services.knowledge_graph import Neo4jClient
+                        with Neo4jClient() as client:
+                            result = client.execute_query(
+                                "MATCH (p:Paper {arxiv_id: $arxiv_id}) RETURN p.title as title",
+                                {"arxiv_id": paper_id}
+                            )
+                            if result and result[0].get("title"):
+                                papers_info.append(f"{paper_id} ({result[0]['title']})")
+                            else:
+                                papers_info.append(paper_id)
+                except Exception as e:
+                    logger.warning(f"Could not fetch paper titles: {e}")
+                    papers_info = focused_papers
+                
+                query_lower = query.lower()
+                if len(focused_papers) == 1 and any(phrase in query_lower for phrase in ["this paper", "the paper", "it ", "its "]):
+                    focus_instruction = f"\n\nCRITICAL CONTEXT - FOCUSED PAPER:\nThe user is asking about THIS SPECIFIC PAPER: {papers_info[0]}\nArXiv ID: {focused_papers[0]}\n\nWhen the user says 'this paper', 'the paper', 'it', or 'its', they are referring to arXiv:{focused_papers[0]}.\nYou MUST retrieve and provide information specifically about arXiv:{focused_papers[0]}."
+                else:
+                    focus_instruction = f"\n\nIMPORTANT - FOCUSED PAPERS MODE:\nThe user has focused on these specific papers:\n" + "\n".join(f"- {info}" for info in papers_info) + f"\n\nYou MUST prioritize information from these papers in your response. When searching, filter results to these arXiv IDs."
+                
                 agent_input = agent_input + focus_instruction
-                logger.info(f"📌 Added {len(focused_papers)} focused papers to agent context: {focused_papers}")
+                logger.info(f"Added {len(focused_papers)} focused papers to agent context: {focused_papers}")
             
-            logger.info("🤖 Running agent...")
+            logger.info("Running agent...")
             result = await Runner.run(self.agent, agent_input)
             
             response = result.final_output or "I apologize, but I couldn't generate a response. Please try rephrasing your question."
-            logger.info(f"✅ Agent completed - response length: {len(response)} chars")
+            logger.info(f"Agent completed - response length: {len(response)} chars")
             
             sources = []
             graph_insights = {}
             tool_calls_data = []
             
-            logger.info(f"🔍 Result type: {type(result)}")
-            logger.info(f"🔍 Result has messages: {hasattr(result, 'messages')}")
-            logger.info(f"🔍 Result attributes: {[attr for attr in dir(result) if not attr.startswith('_')]}")
+            logger.info(f"Result type: {type(result)}")
+            logger.info(f"Result has messages: {hasattr(result, 'messages')}")
+            logger.info(f"Result attributes: {[attr for attr in dir(result) if not attr.startswith('_')]}")
             
             if hasattr(result, 'messages'):
-                logger.info(f"🔍 Number of messages: {len(result.messages)}")
+                logger.info(f"Number of messages: {len(result.messages)}")
                 for i, msg in enumerate(result.messages):
-                    logger.info(f"🔍 Message {i}: role={getattr(msg, 'role', 'NO_ROLE')}, type={type(msg)}")
+                    logger.info(f"Message {i}: role={getattr(msg, 'role', 'NO_ROLE')}, type={type(msg)}")
                     
                     if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                        logger.info(f"🔍 Found tool_calls in message {i}")
+                        logger.info(f"Found tool_calls in message {i}")
                         for tool_call in msg.tool_calls:
                             tool_calls_data.append({
                                 'tool': tool_call.function.name if hasattr(tool_call, 'function') else 'unknown',
@@ -183,52 +213,52 @@ class BaseAgent:
                             })
                     
                     if hasattr(msg, 'role') and msg.role == 'tool':
-                        logger.info(f"🔍 Found tool response in message {i}")
-                        logger.info(f"🔍 Content type: {type(msg.content)}")
-                        logger.info(f"🔍 Content preview: {str(msg.content)[:300]}")
+                        logger.info(f"Found tool response in message {i}")
+                        logger.info(f"Content type: {type(msg.content)}")
+                        logger.info(f"Content preview: {str(msg.content)[:300]}")
                         try:
                             import json
                             tool_result = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
-                            logger.info(f"🔍 Parsed tool_result type: {type(tool_result)}")
-                            logger.info(f"🔍 Tool result keys: {tool_result.keys() if isinstance(tool_result, dict) else 'NOT_DICT'}")
+                            logger.info(f"Parsed tool_result type: {type(tool_result)}")
+                            logger.info(f"Tool result keys: {tool_result.keys() if isinstance(tool_result, dict) else 'NOT_DICT'}")
                             
                             if isinstance(tool_result, dict):
                                 if 'sources' in tool_result:
                                     found_sources = tool_result.get('sources', [])
-                                    logger.info(f"✅ Found {len(found_sources)} sources in tool result!")
+                                    logger.info(f"{len(found_sources)} sources in tool result!")
                                     sources.extend(found_sources)
                                 if 'graph_insights' in tool_result:
                                     graph_insights = tool_result.get('graph_insights', {})
-                                    logger.info(f"✅ Found graph_insights in tool result!")
+                                    logger.info("Found graph_insights in tool result!")
                         except Exception as e:
-                            logger.error(f"❌ Error parsing tool response: {e}")
-                            logger.debug(f"🔍 Raw content: {msg.content}")
+                            logger.error(f"Error parsing tool response: {e}")
+                            logger.debug(f"Raw content: {msg.content}")
 
             elif hasattr(result, 'data'):
-                logger.info(f"🔍 Result has 'data' attribute, checking...")
+                logger.info("Result has 'data' attribute, checking...")
                 if isinstance(result.data, dict):
                     sources = result.data.get('sources', [])
                     graph_insights = result.data.get('graph_insights', {})
             elif hasattr(result, 'output'):
-                logger.info(f"🔍 Result has 'output' attribute, checking...")
+                logger.info("Result has 'output' attribute, checking...")
                 if isinstance(result.output, dict):
                     sources = result.output.get('sources', [])
                     graph_insights = result.output.get('graph_insights', {})
             else:
-                logger.warning("⚠️ Result has no messages/data/output attribute!")
+                logger.warning("Result has no messages/data/output attribute!")
                 
-                logger.info("🔍 Attempting to use global tool cache...")
+                logger.info("Attempting to use global tool cache...")
                 try:
                     from src.agents.tools import get_last_tool_result
                     cached_result = get_last_tool_result()
                     if cached_result:
                         sources = cached_result.get('sources', [])
                         graph_insights = cached_result.get('graph_insights', {})
-                        logger.info(f"✅ Retrieved from cache: {len(sources)} sources")
+                        logger.info(f"Retrieved from cache: {len(sources)} sources")
                 except Exception as e:
-                    logger.error(f"❌ Cache retrieval failed: {e}")
+                    logger.error(f"Cache retrieval failed: {e}")
             
-            logger.info(f"📊 Extracted {len(sources)} sources and {len(tool_calls_data)} tool calls")
+            logger.info(f"Extracted {len(sources)} sources and {len(tool_calls_data)} tool calls")
             
             timestamp = datetime.now().isoformat()
             
@@ -247,11 +277,11 @@ class BaseAgent:
                 }
             ])
             
-            logger.info(f"💾 Saved interaction to session {chat_id}")
+            logger.info(f"Saved interaction to session {chat_id}")
             
             session_info = await self.get_session_info(chat_id)
-            logger.info(f"📊 Updated session: {session_info.get('user_turns', 0)} turns, strategy: {session_info.get('current_strategy', 'unknown')}")
-            logger.debug(f"📤 Response preview: {response[:200]}...")
+            logger.info(f"Updated session: {session_info.get('user_turns', 0)} turns, strategy: {session_info.get('current_strategy', 'unknown')}")
+            logger.debug(f"Response preview: {response[:200]}...")
             
             return {
                 "response": response,
@@ -261,7 +291,7 @@ class BaseAgent:
             }
             
         except Exception as e:
-            logger.error(f"❌ Error in process_query: {e}", exc_info=True)
+            logger.error(f"Error in process_query: {e}", exc_info=True)
             
             try:
                 from src.agents.tools import search_papers
@@ -295,12 +325,12 @@ class BaseAgent:
             if chat_id in self._sessions:
                 await self._sessions[chat_id].clear_session()
                 del self._sessions[chat_id]
-                logger.info(f"🗑️ Cleared session for {chat_id}")
+                logger.info(f"Cleared session for {chat_id}")
                 return True
-            logger.warning(f"⚠️ Session {chat_id} not found for clearing")
+            logger.warning(f"Session {chat_id} not found for clearing")
             return False
         except Exception as e:
-            logger.error(f"❌ Error clearing session {chat_id}: {e}")
+            logger.error(f"Error clearing session {chat_id}: {e}")
             return False
     
     def get_strategy_recommendations(self, conversation_type: str) -> Dict[str, Any]:
@@ -311,10 +341,10 @@ class BaseAgent:
         """Switch context management strategy for an existing session."""
         try:
             if chat_id in self._sessions:
-                logger.info(f"🔄 Switching session {chat_id} to strategy: {new_strategy}")
+                logger.info(f"Switching session {chat_id} to strategy: {new_strategy}")
                 current_session = self._sessions[chat_id]
                 history = await current_session.get_items()
-                logger.debug(f"📜 Transferring {len(history)} items to new session")
+                logger.debug(f"Transferring {len(history)} items to new session")
                 
                 new_session = SessionFactory.create_session(
                     chat_id,
@@ -326,36 +356,40 @@ class BaseAgent:
                     await new_session.add_items(history)
                 
                 self._sessions[chat_id] = new_session
-                logger.info(f"✅ Successfully switched session {chat_id} to strategy: {new_strategy}")
+                logger.info(f"Successfully switched session {chat_id} to strategy: {new_strategy}")
                 return True
-            logger.warning(f"⚠️ Session {chat_id} not found for strategy switch")
+            logger.warning(f"Session {chat_id} not found for strategy switch")
             return False
         except Exception as e:
-            logger.error(f"❌ Error switching strategy for {chat_id}: {e}")
+            logger.error(f"Error switching strategy for {chat_id}: {e}")
             return False
     
     def add_focused_paper(self, chat_id: str, arxiv_id: str) -> None:
         """Add a paper to the focused list for this session."""
         if chat_id not in self._focused_papers:
             self._focused_papers[chat_id] = []
-        
-        if arxiv_id not in self._focused_papers[chat_id]:
-            self._focused_papers[chat_id].append(arxiv_id)
-            logger.info(f"📌 Focused on paper {arxiv_id} for chat {chat_id}")
+        self._focused_papers[chat_id].append(arxiv_id)
+        logger.info(f"Focused on paper {arxiv_id} for chat {chat_id}")
     
     def remove_focused_paper(self, chat_id: str, arxiv_id: str) -> None:
-        """Remove a paper from the focused list."""
-        if chat_id in self._focused_papers and arxiv_id in self._focused_papers[chat_id]:
-            self._focused_papers[chat_id].remove(arxiv_id)
-            logger.info(f"📍 Unfocused paper {arxiv_id} for chat {chat_id}")
+        """Remove a paper from the focused list (idempotent: removes all occurrences)."""
+        if chat_id in self._focused_papers and self._focused_papers[chat_id]:
+            before = len(self._focused_papers[chat_id])
+            self._focused_papers[chat_id] = [p for p in self._focused_papers[chat_id] if p != arxiv_id]
+            after = len(self._focused_papers[chat_id])
+            removed = before - after
+            if removed > 0:
+                logger.info(f"Unfocused paper {arxiv_id} for chat {chat_id} (removed {removed} occurrence(s))")
+            else:
+                logger.info(f"Paper {arxiv_id} not present for chat {chat_id}")
     
     def clear_focused_papers(self, chat_id: str) -> None:
         """Clear all focused papers for this session."""
         if chat_id in self._focused_papers:
             count = len(self._focused_papers[chat_id])
             self._focused_papers[chat_id] = []
-            logger.info(f"🔄 Cleared {count} focused papers for chat {chat_id}")
+            logger.info(f"Cleared {count} focused papers for chat {chat_id}")
     
     def get_focused_papers(self, chat_id: str) -> list:
-        """Get list of focused paper IDs for this session."""
+        """Get list of focused paper IDs for this session (frontend is the source of truth)."""
         return self._focused_papers.get(chat_id, [])

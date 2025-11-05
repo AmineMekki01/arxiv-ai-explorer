@@ -51,6 +51,9 @@ export const apiEndpoints = {
   
   getFocusedPapers: (chatId: string) =>
     api.get(`/assistant/session/${chatId}/focus`),
+  
+  getPaperDetail: (arxivId: string) =>
+    api.get(`/assistant/papers/${arxivId}/detail`),
 };
 
 export const apiHelpers = {

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Drawer,
   Box,
@@ -22,6 +23,7 @@ import {
   TrendingUp as CentralIcon,
   PushPin as PinIcon,
   Link as LinkIcon,
+  Info as InfoIcon,
 } from '@mui/icons-material';
 
 interface ChunkDetail {
@@ -56,6 +58,7 @@ export const SourcesSidebar: React.FC<SourcesSidebarProps> = ({
   onFocusPaper,
   focusedPapers = [],
 }) => {
+  const navigate = useNavigate();
   const totalChunks = sources.reduce((sum, s) => sum + s.chunks_used, 0);
   const isFocused = (arxivId: string) =>
     focusedPapers.some((p) => p.arxiv_id === arxivId);
@@ -241,7 +244,15 @@ export const SourcesSidebar: React.FC<SourcesSidebarProps> = ({
 
                     {/* Actions */}
                     <Divider sx={{ my: 1.5 }} />
-                    <Stack direction="row" spacing={1}>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ gap: 1 }}>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        startIcon={<InfoIcon />}
+                        onClick={() => navigate(`/paper/${source.arxiv_id}`)}
+                      >
+                        View Details
+                      </Button>
                       {onFocusPaper && (
                         <Button
                           size="small"
