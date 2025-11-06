@@ -72,6 +72,13 @@ export const apiEndpoints = {
   
   getPaperDetail: (arxivId: string) =>
     api.get(`/assistant/papers/${arxivId}/detail`),
+
+  listBookmarks: () => api.get('/bookmarks'),
+  addBookmark: (arxiv_id: string, title?: string) => api.post('/bookmarks', { arxiv_id, title }),
+  removeBookmark: (params: { arxiv_id?: string; id?: string }) => api.delete('/bookmarks', { params }),
+
+  listHistory: (limit: number = 25) => api.get('/history', { params: { limit } }),
+  clearHistory: () => api.delete('/history'),
 };
 
 export const apiHelpers = {
@@ -245,6 +252,49 @@ export const apiHelpers = {
       return { success: true, message: res.data.message, sources: res.data.sources || [], graph_insights: res.data.graph_insights || {} };
     } catch (e: any) {
       return { success: false, error: e.response?.data?.detail || 'Failed to send message' };
+    }
+  },
+
+  listBookmarks: async () => {
+    try {
+      const res = await apiEndpoints.listBookmarks();
+      return { success: true, items: res.data as Array<{ id: string; arxiv_id: string; title?: string; paper_id?: number }> };
+    } catch (e: any) {
+      return { success: false, error: e.response?.data?.detail || 'Failed to load bookmarks' };
+    }
+  },
+  addBookmark: async (arxiv_id: string, title?: string) => {
+    try {
+      const res = await apiEndpoints.addBookmark(arxiv_id, title);
+      return { success: true, item: res.data };
+    } catch (e: any) {
+      return { success: false, error: e.response?.data?.detail || 'Failed to add bookmark' };
+    }
+  },
+  removeBookmark: async (params: { arxiv_id?: string; id?: string }) => {
+    try {
+      const res = await apiEndpoints.removeBookmark(params);
+      return { success: true, data: res.data };
+    } catch (e: any) {
+      return { success: false, error: e.response?.data?.detail || 'Failed to remove bookmark' };
+    }
+  },
+
+  listHistory: async (limit: number = 25) => {
+    try {
+      const res = await apiEndpoints.listHistory(limit);
+      console.log("history : ", res.data)
+      return { success: true, items: res.data as Array<{ id: string; query: string; created_at: string; params?: any; results_count?: string }> };
+    } catch (e: any) {
+      return { success: false, error: e.response?.data?.detail || 'Failed to load history' };
+    }
+  },
+  clearHistory: async () => {
+    try {
+      const res = await apiEndpoints.clearHistory();
+      return { success: true, data: res.data };
+    } catch (e: any) {
+      return { success: false, error: e.response?.data?.detail || 'Failed to clear history' };
     }
   },
 };

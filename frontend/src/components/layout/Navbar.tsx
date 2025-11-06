@@ -6,15 +6,18 @@ import {
   IconButton,
   Box,
   Button,
+  Badge,
   Stack,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
   Science as ScienceIcon,
+  BookmarkBorder as BookmarkIcon,
 } from '@mui/icons-material';
 import '../../styles/animations.css';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { apiHelpers } from '../../services/api';
 
 interface NavbarProps {
   onMenuClick: () => void;
@@ -23,6 +26,27 @@ interface NavbarProps {
 const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
   const navigate = useNavigate();
   const { isAuthenticated, logout } = useAuth();
+  const [bmCount, setBmCount] = React.useState<number>(0);
+
+  const loadBmCount = React.useCallback(async () => {
+    try {
+      const res = await apiHelpers.listBookmarks();
+      if (res.success) setBmCount((res.items || []).length);
+    } catch {}
+  }, []);
+
+  React.useEffect(() => {
+    if (isAuthenticated) {
+      loadBmCount();
+    } else {
+      setBmCount(0);
+    }
+    const handler = () => {
+      if (document.visibilityState === 'visible' && isAuthenticated) loadBmCount();
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, [isAuthenticated, loadBmCount]);
   return (
     <AppBar
       position="fixed"
@@ -96,6 +120,11 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
         <Stack direction="row" spacing={{ xs: 1, sm: 1.5 }} alignItems="center">
           {isAuthenticated ? (
             <>
+              <IconButton aria-label="saved" onClick={() => navigate('/saved')}>
+                <Badge color="secondary" badgeContent={bmCount} overlap="circular" max={99}>
+                  <BookmarkIcon />
+                </Badge>
+              </IconButton>
               <Button
                 variant="text"
                 size="small"

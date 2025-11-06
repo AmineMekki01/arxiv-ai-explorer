@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 from src.agents.base_agent import retrieval_agent
 from src.core import logger
 from src.routes.auth import require_auth
+from src.database import get_sync_session
+from src.models.search_history import SearchHistory
 from src.models.user import User
 from src.services.chat_store import ChatStore
 
@@ -59,7 +61,41 @@ async def query_agent(
         
         session_info = await retrieval_agent.get_session_info(chat_id)
         
+        print(f"type1 : {type(result)}")
         if isinstance(result, dict):
+            top_sources = None
+            try:
+                srcs = result.get('sources', [])
+                if isinstance(srcs, list) and srcs:
+                    titles = []
+                    for s in srcs:
+                        t = None
+                        if isinstance(s, dict):
+                            t = s.get('title') or s.get('paper_title')
+                        if isinstance(t, str):
+                            titles.append(t)
+                        if len(titles) >= 3:
+                            break
+                    if titles:
+                        top_sources = titles
+            except Exception:
+                top_sources = None
+            try:
+                with get_sync_session() as db:
+                    db.add(SearchHistory(
+                        user_id=current_user.id,
+                        query=q,
+                        params={
+                            "chat_id": chat_id,
+                            "conversation_type": conversation_type,
+                            "via": "assistant_get",
+                            "top_sources": top_sources,
+                        },
+                        results_count=str(len(result.get('sources', [])))
+                    ))
+                    db.commit()
+            except Exception:
+                pass
             return {
                 "final_output": result.get("response", result.get("final_output", "")),
                 "sources": result.get("sources", []),
@@ -71,6 +107,22 @@ async def query_agent(
                 "session_info": session_info
             }
         else:
+            # Log history with unknown sources length
+            try:
+                with get_sync_session() as db:
+                    db.add(SearchHistory(
+                        user_id=current_user.id,
+                        query=q,
+                        params={
+                            "chat_id": chat_id,
+                            "conversation_type": conversation_type,
+                            "via": "assistant_get",
+                        },
+                        results_count=None
+                    ))
+                    db.commit()
+            except Exception:
+                pass
             return {
                 "final_output": result,
                 "status": "success",
@@ -110,7 +162,42 @@ async def query_agent_post(request: QueryRequest, current_user: User = Depends(r
         logger.info(f"Query processed successfully for {request.chat_id}")
         logger.info(f"Session: {session_info.get('user_turns', 0)} turns, strategy: {session_info.get('current_strategy', 'unknown')}")
         
+        print(f"type2 : {type(result)}")
+  
         if isinstance(result, dict):
+            top_sources = None
+            try:
+                srcs = result.get('sources', [])
+                if isinstance(srcs, list) and srcs:
+                    titles = []
+                    for s in srcs:
+                        t = None
+                        if isinstance(s, dict):
+                            t = s.get('title') or s.get('paper_title')
+                        if isinstance(t, str):
+                            titles.append(t)
+                        if len(titles) >= 3:
+                            break
+                    if titles:
+                        top_sources = titles
+            except Exception:
+                top_sources = None
+            try:
+                with get_sync_session() as db:
+                    db.add(SearchHistory(
+                        user_id=current_user.id,
+                        query=request.query,
+                        params={
+                            "chat_id": request.chat_id,
+                            "conversation_type": request.conversation_type,
+                            "via": "assistant_post",
+                            "top_sources": top_sources,
+                        },
+                        results_count=str(len(result.get('sources', [])))
+                    ))
+                    db.commit()
+            except Exception:
+                pass
             return {
                 "final_output": result.get("response", result.get("final_output", "")),
                 "sources": result.get("sources", []),
@@ -122,6 +209,22 @@ async def query_agent_post(request: QueryRequest, current_user: User = Depends(r
                 "session_info": session_info
             }
         else:
+            # Log history when result is not dict
+            try:
+                with get_sync_session() as db:
+                    db.add(SearchHistory(
+                        user_id=current_user.id,
+                        query=request.query,
+                        params={
+                            "chat_id": request.chat_id,
+                            "conversation_type": request.conversation_type,
+                            "via": "assistant_post",
+                        },
+                        results_count=None
+                    ))
+                    db.commit()
+            except Exception:
+                pass
             return {
                 "final_output": result,
                 "status": "success",

@@ -5,6 +5,8 @@ from src.services.chat_store import ChatStore
 from src.agents.base_agent import retrieval_agent
 from src.core import logger
 from src.routes.auth import require_auth
+from src.database import get_sync_session
+from src.models.search_history import SearchHistory
 from src.models.user import User
 
 router = APIRouter(prefix="/chats", tags=["chats"])
@@ -108,6 +110,47 @@ async def send_message(chat_id: str, request: MessageRequest, current_user: User
             "graph_insights": graph_insights
         }
         assistant_msg = chat_store.add_message(chat_id, "assistant", assistant_content, user_id=str(current_user.id), metadata=metadata)
+
+        try:
+            with get_sync_session() as db:
+                top_sources: list[str] | None = None
+                top_sources_full: list[dict] | None = None
+                try:
+                    if isinstance(sources, list) and len(sources) > 0:
+                        titles = []
+                        full = []
+                        for s in sources:
+                            t = None
+                            if isinstance(s, dict):
+                                t = s.get("title") or s.get("paper_title")
+                                aid = s.get("arxiv_id")
+                            if isinstance(t, str):
+                                titles.append(t)
+                                full.append({"title": t, "arxiv_id": aid})
+                            if len(titles) >= 3:
+                                break
+                        if titles:
+                            top_sources = titles
+                            top_sources_full = full
+                except Exception:
+                    top_sources = None
+                    top_sources_full = None
+
+                db.add(SearchHistory(
+                    user_id=current_user.id,
+                    query=request.content,
+                    params={
+                        "chat_id": chat_id,
+                        "via": "chat_messages",
+                        "conversation_type": "research",
+                        "top_sources": top_sources,
+                        "top_sources_full": top_sources_full,
+                    },
+                    results_count=str(len(sources)) if sources is not None else None,
+                ))
+                db.commit()
+        except Exception:
+            pass
         
         return {
             "status": "success", 

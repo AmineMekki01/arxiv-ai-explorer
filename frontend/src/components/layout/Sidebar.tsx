@@ -14,6 +14,7 @@ import {
 import {
   Science as ScienceIcon,
   Search as SearchIcon,
+  BookmarkBorder as BookmarkIcon,
 } from '@mui/icons-material';
 import '../../styles/animations.css';
 
@@ -25,6 +26,7 @@ interface SidebarProps {
 const menuItems = [
   { text: 'Research Workspace', icon: <ScienceIcon />, path: '/research' },
   { text: 'Search', icon: <SearchIcon />, path: '/search' },
+  { text: 'Saved', icon: <BookmarkIcon />, path: '/saved' },
 ];
 
 
