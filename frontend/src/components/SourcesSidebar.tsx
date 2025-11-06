@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Drawer,
@@ -14,6 +14,8 @@ import {
   Button,
   Stack,
   Tooltip,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -24,7 +26,9 @@ import {
   PushPin as PinIcon,
   Link as LinkIcon,
   Info as InfoIcon,
+  BookmarkBorder as BookmarkIcon,
 } from '@mui/icons-material';
+import { apiHelpers } from '../services/api';
 
 interface ChunkDetail {
   section: string;
@@ -62,6 +66,47 @@ export const SourcesSidebar: React.FC<SourcesSidebarProps> = ({
   const totalChunks = sources.reduce((sum, s) => sum + s.chunks_used, 0);
   const isFocused = (arxivId: string) =>
     focusedPapers.some((p) => p.arxiv_id === arxivId);
+
+  const [bookmarked, setBookmarked] = useState<Set<string>>(new Set());
+  const [snack, setSnack] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>(
+    { open: false, message: '', severity: 'success' }
+  );
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiHelpers.listBookmarks();
+        if (res.success) {
+          const ids = new Set((res.items || []).map((b: any) => b.arxiv_id));
+          setBookmarked(ids);
+        }
+      } catch {}
+    })();
+  }, []);
+
+  const handleToggleBookmark = async (arxivId: string, title: string) => {
+    try {
+      if (bookmarked.has(arxivId)) {
+        const res = await apiHelpers.removeBookmark({ arxiv_id: arxivId });
+        if (res.success) {
+          setBookmarked((prev) => {
+            const next = new Set(prev);
+            next.delete(arxivId);
+            return next;
+          });
+          setSnack({ open: true, message: 'Removed bookmark', severity: 'success' });
+        }
+      } else {
+        const res = await apiHelpers.addBookmark(arxivId, title);
+        if (res.success) {
+          setBookmarked((prev) => new Set(prev).add(arxivId));
+          setSnack({ open: true, message: 'Saved to bookmarks', severity: 'success' });
+        }
+      }
+    } catch {
+      setSnack({ open: true, message: 'Bookmark action failed', severity: 'error' });
+    }
+  };
 
   return (
     <Drawer
@@ -253,6 +298,15 @@ export const SourcesSidebar: React.FC<SourcesSidebarProps> = ({
                       >
                         View Details
                       </Button>
+                      <Button
+                        size="small"
+                        variant={bookmarked.has(source.arxiv_id) ? 'contained' : 'outlined'}
+                        color={bookmarked.has(source.arxiv_id) ? 'secondary' : 'primary'}
+                        startIcon={<BookmarkIcon />}
+                        onClick={() => handleToggleBookmark(source.arxiv_id, source.title)}
+                      >
+                        {bookmarked.has(source.arxiv_id) ? 'Bookmarked' : 'Bookmark'}
+                      </Button>
                       {onFocusPaper && (
                         <Button
                           size="small"
@@ -281,6 +335,16 @@ export const SourcesSidebar: React.FC<SourcesSidebarProps> = ({
           )}
         </Box>
       </Box>
+      <Snackbar
+        open={snack.open}
+        autoHideDuration={2500}
+        onClose={() => setSnack((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setSnack((s) => ({ ...s, open: false }))} severity={snack.severity} sx={{ width: '100%' }}>
+          {snack.message}
+        </Alert>
+      </Snackbar>
     </Drawer>
   );
 };

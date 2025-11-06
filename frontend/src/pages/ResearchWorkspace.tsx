@@ -45,7 +45,8 @@ import { SourcesPanel } from '../components/SourcesPanel';
 import { FocusedPapersBar } from '../components/FocusedPapersBar';
 import { SourcesSidebar } from '../components/SourcesSidebar';
 import '../styles/animations.css';
-import { useParams, useNavigate } from 'react-router-dom';
+import RecentSearches from '../components/RecentSearches';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 
 interface Source {
   arxiv_id: string;
@@ -99,7 +100,9 @@ interface SearchResult {
 }
 
 const ResearchWorkspace: React.FC = () => {
+  const params = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { chatId: routeChatId } = useParams();
   const [chatId, setChatId] = useState<string>('');
   const [isInitialized, setIsInitialized] = useState(false);
@@ -606,6 +609,9 @@ const ResearchWorkspace: React.FC = () => {
                 <Box component="span">{type.label}</Box>
               </Button>
             ))}
+          </Box>
+          <Box sx={{ display: { xs: 'none', md: 'block' } }}>
+            <RecentSearches limit={10} variant="compact" onSelect={(q) => setCurrentMessage(q)} />
           </Box>
         </Box>
       </Box>

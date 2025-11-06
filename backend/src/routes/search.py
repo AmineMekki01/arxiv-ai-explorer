@@ -1,9 +1,13 @@
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
 from src.services.retrieval.graph_enhanced_retriever import get_graph_enhanced_retriever
 from src.core import logger
+from src.routes.auth import get_current_user
+from src.models.user import User
+from src.database import get_sync_session
+from src.models.search_history import SearchHistory
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -68,7 +72,7 @@ class SearchResponse(BaseModel):
 
 
 @router.post("/enhanced", response_model=SearchResponse)
-async def enhanced_search(request: SearchRequest):
+async def enhanced_search(request: SearchRequest, current_user: Optional[User] = Depends(get_current_user)):
     """
     Perform graph-enhanced search.
     
@@ -98,6 +102,22 @@ async def enhanced_search(request: SearchRequest):
             include_foundations=request.include_foundations,
             min_foundation_citations=request.min_foundation_citations
         )
+        try:
+            if current_user:
+                with get_sync_session() as db:
+                    db.add(SearchHistory(
+                        user_id=current_user.id,
+                        query=request.query,
+                        params={
+                            "limit": request.limit,
+                            "include_foundations": request.include_foundations,
+                            "min_foundation_citations": request.min_foundation_citations,
+                        },
+                        results_count=str(len(results.get('results', [])))
+                    ))
+                    db.commit()
+        except Exception as le:
+            logger.warning(f"Failed to log search history: {le}")
         
         logger.info(f"Enhanced search completed: {len(results['results'])} papers")
         return results

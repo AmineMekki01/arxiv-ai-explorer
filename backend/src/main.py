@@ -14,6 +14,8 @@ from src.routes.search import router as search_router
 from src.routes.chat import router as chat_router
 from src.routes.auth import router as auth_router
 from src.routes.preferences import router as preferences_router
+from src.routes.bookmarks import router as bookmarks_router
+from src.routes.history import router as history_router
 
 settings = get_settings()
 
@@ -59,6 +61,8 @@ app.include_router(preferences_router)
 app.include_router(assistant_router)
 app.include_router(search_router)
 app.include_router(chat_router)
+app.include_router(bookmarks_router)
+app.include_router(history_router)
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
