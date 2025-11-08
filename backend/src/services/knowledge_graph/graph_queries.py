@@ -115,7 +115,7 @@ class GraphQueryService:
         
         Args:
             arxiv_id: Source paper ID
-            depth: Network depth (1 or 2)
+            depth: Network depth (1-3)
             
         Returns:
             Citation network with nodes and edges
@@ -128,21 +128,52 @@ class GraphQueryService:
             RETURN collect(DISTINCT {
                        arxiv_id: cited.arxiv_id,
                        title: cited.title,
-                       type: 'cited'
+                       citation_count: cited.citation_count,
+                       is_seminal: cited.is_highly_cited
                    }) as cited_papers,
                    collect(DISTINCT {
                        arxiv_id: citing.arxiv_id,
                        title: citing.title,
-                       type: 'citing'
+                       citation_count: citing.citation_count,
+                       is_seminal: citing.is_highly_cited
                    }) as citing_papers
             """
-        else:
+        elif depth == 2:
             query = """
             MATCH (p:Paper {arxiv_id: $arxiv_id})
             OPTIONAL MATCH path = (p)-[:CITES*1..2]->(cited:Paper)
             OPTIONAL MATCH path2 = (citing:Paper)-[:CITES*1..2]->(p)
-            WITH collect(DISTINCT cited) as cited_papers,
-                 collect(DISTINCT citing) as citing_papers
+            WITH collect(DISTINCT {
+                       arxiv_id: cited.arxiv_id,
+                       title: cited.title,
+                       citation_count: cited.citation_count,
+                       is_seminal: cited.is_highly_cited
+                   }) as cited_papers,
+                 collect(DISTINCT {
+                       arxiv_id: citing.arxiv_id,
+                       title: citing.title,
+                       citation_count: citing.citation_count,
+                       is_seminal: citing.is_highly_cited
+                   }) as citing_papers
+            RETURN cited_papers, citing_papers
+            """
+        else:  # depth == 3
+            query = """
+            MATCH (p:Paper {arxiv_id: $arxiv_id})
+            OPTIONAL MATCH path = (p)-[:CITES*1..3]->(cited:Paper)
+            OPTIONAL MATCH path2 = (citing:Paper)-[:CITES*1..3]->(p)
+            WITH collect(DISTINCT {
+                       arxiv_id: cited.arxiv_id,
+                       title: cited.title,
+                       citation_count: cited.citation_count,
+                       is_seminal: cited.is_highly_cited
+                   }) as cited_papers,
+                 collect(DISTINCT {
+                       arxiv_id: citing.arxiv_id,
+                       title: citing.title,
+                       citation_count: citing.citation_count,
+                       is_seminal: citing.is_highly_cited
+                   }) as citing_papers
             RETURN cited_papers, citing_papers
             """
             
@@ -151,9 +182,15 @@ class GraphQueryService:
         try:
             results = self.client.execute_query(query, parameters)
             logger.info(f"Retrieved citation network for {arxiv_id} at depth {depth}")
-            return results[0] if results else {"cited_papers": [], "citing_papers": []}
+            if results and len(results) > 0:
+                result = results[0]
+                cited = [p for p in result.get("cited_papers", []) if p and p.get("arxiv_id")]
+                citing = [p for p in result.get("citing_papers", []) if p and p.get("arxiv_id")]
+                logger.info(f"Found {len(cited)} cited papers and {len(citing)} citing papers")
+                return {"cited_papers": cited, "citing_papers": citing}
+            return {"cited_papers": [], "citing_papers": []}
         except Exception as e:
-            logger.error(f"Failed to get citation network: {e}")
+            logger.error(f"Failed to get citation network for {arxiv_id}: {e}")
             return {"cited_papers": [], "citing_papers": []}
             
     def find_research_path(

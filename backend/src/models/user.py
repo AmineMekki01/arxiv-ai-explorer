@@ -1,9 +1,10 @@
+import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import relationship
 from src.database import Base
-import uuid
+from src.models.chat import Chat
 
 class User(Base):
     __tablename__ = "users"

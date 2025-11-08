@@ -56,11 +56,50 @@ async def get_citation_network(
     try:
         with Neo4jClient() as client:
             service = GraphQueryService(client)
+            
+            
             result = service.find_citation_network(arxiv_id, depth)
             
-            cited = [PaperNode(**p) for p in result.get("cited_papers", [])]
-            citing = [PaperNode(**p) for p in result.get("citing_papers", [])]
+            if not result:
+                return CitationNetwork(
+                    center_paper=arxiv_id,
+                    cited_papers=[],
+                    citing_papers=[],
+                    depth=depth
+                )
+
+            cited_raw = result.get("cited_papers", [])
+            citing_raw = result.get("citing_papers", [])
             
+            cited = []
+            for p in cited_raw:
+                if p is None:
+                    continue
+                if isinstance(p, dict):
+                    cited.append(PaperNode(**p))
+                else:
+                    cited.append(PaperNode(
+                        arxiv_id=p.get('arxiv_id'),
+                        title=p.get('title'),
+                        citation_count=p.get('citation_count'),
+                        is_seminal=p.get('is_highly_cited', False)
+                    ))
+            
+            citing = []
+            for p in citing_raw:
+                if p is None:
+                    continue
+                if isinstance(p, dict):
+                    citing.append(PaperNode(**p))
+                else:
+                    citing.append(PaperNode(
+                        arxiv_id=p.get('arxiv_id'),
+                        title=p.get('title'),
+                        citation_count=p.get('citation_count'),
+                        is_seminal=p.get('is_highly_cited', False)
+                    ))
+
+            logger.info(f"Returning {len(cited)} cited papers and {len(citing)} citing papers")
             return CitationNetwork(
                 center_paper=arxiv_id,
                 cited_papers=cited,
@@ -69,8 +108,18 @@ async def get_citation_network(
             )
             
     except Exception as e:
-        logger.error(f"Failed to get citation network: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        msg = str(e)
+        logger.warning(f"Citation network lookup fallback for {arxiv_id}: {msg}")
+        try:
+            return CitationNetwork(
+                center_paper=arxiv_id,
+                cited_papers=[],
+                citing_papers=[],
+                depth=depth
+            )
+        except Exception:
+            logger.error(f"Failed to get citation network: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/papers/path", response_model=ResearchPath)

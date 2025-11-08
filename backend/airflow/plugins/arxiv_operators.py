@@ -398,7 +398,12 @@ class ChunkDocumentsOperator(BaseOperator):
                 
                 chunks = chunker.chunk_paper(doc)
                 
-                for idx, chunk in enumerate(chunks):           
+                for idx, chunk in enumerate(chunks):
+                    if chunk.meta.headings:
+                        heading = chunk.meta.headings[0]
+                    else:
+                        heading = ""
+                           
                     chunk_dict = {
                         "arxiv_id": arxiv_id,
                         "title": p.get("title", ""),
@@ -409,7 +414,7 @@ class ChunkDocumentsOperator(BaseOperator):
                         "affiliations": p.get("affiliations", []),
                         "chunk_index": idx,
                         "chunk_text": chunk.text if hasattr(chunk, 'text') else str(chunk),
-                        "heading": chunk.meta.headings[0]
+                        "heading": heading
                     }
                     all_chunks.append(chunk_dict)
                 

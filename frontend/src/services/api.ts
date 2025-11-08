@@ -78,7 +78,12 @@ export const apiEndpoints = {
   removeBookmark: (params: { arxiv_id?: string; id?: string }) => api.delete('/bookmarks', { params }),
 
   listHistory: (limit: number = 25) => api.get('/history', { params: { limit } }),
-  clearHistory: () => api.delete('/history'),
+  clearHistory: async () => {
+    return api.delete('/history');
+  },
+  getCitationNetwork: async (arxivId: string, depth: number = 2) => {
+    return api.get(`/graph/papers/${encodeURIComponent(arxivId)}/citation-network`, { params: { depth } });
+  },
 };
 
 export const apiHelpers = {
@@ -295,6 +300,14 @@ export const apiHelpers = {
       return { success: true, data: res.data };
     } catch (e: any) {
       return { success: false, error: e.response?.data?.detail || 'Failed to clear history' };
+    }
+  },
+  getCitationNetwork: async (arxivId: string, depth: number = 2) => {
+    try {
+      const res = await apiEndpoints.getCitationNetwork(arxivId, depth);
+      return { success: true, data: res.data };
+    } catch (e: any) {
+      return { success: false, error: e.response?.data?.detail || 'Failed to load citation network' };
     }
   },
 };

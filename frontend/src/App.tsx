@@ -10,6 +10,7 @@ import Register from './pages/Register';
 import Settings from './pages/Settings';
 import SavedPapers from './pages/SavedPapers';
 import SearchPage from './pages/Search';
+import CitationNetwork from './pages/CitationNetwork';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -96,6 +97,14 @@ function App() {
               }
             />
             <Route path="/paper/:arxivId" element={<PaperDetail />} />
+            <Route
+              path="/paper/:arxivId/network"
+              element={
+                <ProtectedRoute>
+                  <CitationNetwork />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/"
               element={

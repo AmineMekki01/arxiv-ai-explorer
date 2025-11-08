@@ -449,6 +449,11 @@ async def get_paper_detail(arxiv_id: str):
         from src.database import get_sync_session
         from src.models.paper import Paper
         from src.services.knowledge_graph import Neo4jClient
+        from src.utils.arxiv_utils import normalize_arxiv_id
+        
+        canonical_id = normalize_arxiv_id(arxiv_id)
+        if canonical_id != arxiv_id:
+            logger.info(f"Normalizing query ID: {arxiv_id} -> {canonical_id}")
         
         logger.info(f"Fetching paper details for {arxiv_id}")
         
@@ -467,6 +472,18 @@ async def get_paper_detail(arxiv_id: str):
         
         try:
             with Neo4jClient() as client:
+                check_query = """
+                MATCH (p:Paper {arxiv_id: $arxiv_id})
+                RETURN p.arxiv_id as arxiv_id, p.title as title, p.citation_count as stored_citation_count
+                """
+                check_result = client.execute_query(check_query, {"arxiv_id": canonical_id})
+                
+                if check_result and len(check_result) > 0:
+                    logger.info(f"Paper found in Neo4j: {check_result[0].get('title', 'N/A')[:50]}...")
+                    logger.info(f"Stored citation_count property: {check_result[0].get('stored_citation_count', 0)}")
+                else:
+                    logger.warning(f"Paper {canonical_id} NOT found in Neo4j graph")
+                
                 query = """
                 MATCH (p:Paper {arxiv_id: $arxiv_id})
                 OPTIONAL MATCH (cited:Paper)-[:CITES]->(p)
@@ -475,12 +492,14 @@ async def get_paper_detail(arxiv_id: str):
                        CASE WHEN citation_count > 100 THEN true ELSE false END as is_seminal
                 """
                 
-                result = client.execute_query(query, {"arxiv_id": arxiv_id})
+                result = client.execute_query(query, {"arxiv_id": canonical_id})
                 
                 if result and len(result) > 0:
                     citation_count = result[0].get("citation_count", 0)
                     is_seminal = result[0].get("is_seminal", False)
-                    logger.info(f"Citation data from Neo4j: {citation_count} citations")
+                    logger.info(f"Dynamic citation count from Neo4j (incoming CITES edges): {citation_count}")
+                else:
+                    logger.warning(f"No citation count result for {arxiv_id}")
         except Exception as e:
             logger.warning(f"Could not get citation data from Neo4j: {e}")
         

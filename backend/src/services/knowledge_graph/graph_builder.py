@@ -4,6 +4,7 @@ from loguru import logger
 
 from .neo4j_client import Neo4jClient
 from src.models.paper import Paper
+from src.utils.arxiv_utils import normalize_arxiv_id
 
 
 class KnowledgeGraphBuilder:
@@ -22,19 +23,26 @@ class KnowledgeGraphBuilder:
     def create_paper_node(self, paper: Paper) -> Dict[str, Any]:
         """
         Create enhanced paper node with metrics and flags.
+        Uses normalized arXiv ID (without version suffix) for consistency.
         """
+        canonical_id = normalize_arxiv_id(paper.arxiv_id)
+        
+        if canonical_id != paper.arxiv_id:
+            logger.info(f"Normalizing arXiv ID: {paper.arxiv_id} -> {canonical_id}")
+        
         if paper.published_date:
             age_days = (datetime.now(timezone.utc) - paper.published_date).days
             age_years = age_days / 365.25
         else:
             age_days = 0
             age_years = 0.1
-            logger.warning(f"Paper {paper.arxiv_id} has no published_date; defaulting age metrics to zero")
+            logger.warning(f"Paper {canonical_id} has no published_date; defaulting age metrics to zero")
         citation_velocity = (paper.citation_count or 0) / max(age_years, 0.1)
         
         query = """
         MERGE (p:Paper {arxiv_id: $arxiv_id})
         SET p.s2_paper_id = $s2_paper_id,
+            p.original_arxiv_id = $original_arxiv_id,
             p.doi = $doi,
             p.title = $title,
             p.abstract = $abstract,
@@ -60,7 +68,8 @@ class KnowledgeGraphBuilder:
         """
         
         parameters = {
-            "arxiv_id": paper.arxiv_id,
+            "arxiv_id": canonical_id,
+            "original_arxiv_id": paper.arxiv_id,
             "s2_paper_id": paper.s2_paper_id,
             "doi": paper.doi,
             "title": paper.title,
@@ -85,10 +94,10 @@ class KnowledgeGraphBuilder:
         
         try:
             result = self.client.execute_write(query, parameters)
-            logger.info(f"Created paper node: {paper.arxiv_id}")
+            logger.info(f"Created/updated paper node: {canonical_id}")
             return result
         except Exception as e:
-            logger.error(f"Failed to create paper node {paper.arxiv_id}: {e}")
+            logger.error(f"Failed to create paper node {canonical_id}: {e}")
             raise
     
     def create_category_hierarchy(self, paper: Paper) -> Dict[str, Any]:
@@ -312,16 +321,21 @@ class KnowledgeGraphBuilder:
     def create_citation_relationships(self, paper: Paper) -> Dict[str, Any]:
         """
         Create smart citation relationships with context inference.
+        All arXiv IDs are normalized to canonical form (without version suffix).
         """
         if not paper.references:
             return {"relationships_created": 0}
+        
+        citing_id = normalize_arxiv_id(paper.arxiv_id)
         
         citations = []
         for ref in paper.references:
             arxiv_id = ref.get("arxiv_id")
             if arxiv_id:
+                normalized_cited_id = normalize_arxiv_id(arxiv_id)
                 citations.append({
-                    "arxiv_id": arxiv_id,
+                    "arxiv_id": normalized_cited_id,
+                    "original_arxiv_id": arxiv_id,
                     "s2_paper_id": ref.get("s2_paper_id"),
                     "title": ref.get("title", ""),
                     "year": ref.get("year"),
@@ -338,6 +352,7 @@ class KnowledgeGraphBuilder:
         MERGE (cited:Paper {arxiv_id: citation.arxiv_id})
         ON CREATE SET 
             cited.title = citation.title,
+            cited.original_arxiv_id = citation.original_arxiv_id,
             cited.s2_paper_id = citation.s2_paper_id,
             cited.is_external = true,
             cited.published_year = citation.year,
@@ -358,31 +373,36 @@ class KnowledgeGraphBuilder:
         """
         
         parameters = {
-            "citing_id": paper.arxiv_id,
+            "citing_id": citing_id,
             "citations": citations
         }
         
         try:
             result = self.client.execute_write(query, parameters)
-            logger.info(f"Created {len(citations)} citation relationships for {paper.arxiv_id}")
+            logger.info(f"Created {len(citations)} citation relationships for {citing_id}")
             return result
         except Exception as e:
-            logger.error(f"Failed to create citations for {paper.arxiv_id}: {e}")
+            logger.error(f"Failed to create citations for {citing_id}: {e}")
             raise
     
     def create_reverse_citations(self, paper: Paper) -> Dict[str, Any]:
         """
         Create incoming citation relationships from cited_by field.
+        All arXiv IDs are normalized to canonical form (without version suffix).
         """
         if not paper.cited_by:
             return {"relationships_created": 0}
+        
+        cited_id = normalize_arxiv_id(paper.arxiv_id)
         
         citing_papers = []
         for citing in paper.cited_by:
             arxiv_id = citing.get("arxiv_id")
             if arxiv_id:
+                normalized_citing_id = normalize_arxiv_id(arxiv_id)
                 citing_papers.append({
-                    "arxiv_id": arxiv_id,
+                    "arxiv_id": normalized_citing_id,
+                    "original_arxiv_id": arxiv_id,
                     "s2_paper_id": citing.get("s2_paper_id"),
                     "title": citing.get("title", ""),
                     "year": citing.get("year")
@@ -398,6 +418,7 @@ class KnowledgeGraphBuilder:
         MERGE (citing:Paper {arxiv_id: citing_paper.arxiv_id})
         ON CREATE SET 
             citing.title = citing_paper.title,
+            citing.original_arxiv_id = citing_paper.original_arxiv_id,
             citing.s2_paper_id = citing_paper.s2_paper_id,
             citing.is_external = true,
             citing.published_year = citing_paper.year,
@@ -408,16 +429,16 @@ class KnowledgeGraphBuilder:
         """
         
         parameters = {
-            "cited_id": paper.arxiv_id,
+            "cited_id": cited_id,
             "citing_papers": citing_papers
         }
         
         try:
             result = self.client.execute_write(query, parameters)
-            logger.info(f"Created {len(citing_papers)} reverse citations for {paper.arxiv_id}")
+            logger.info(f"Created {len(citing_papers)} reverse citations for {cited_id}")
             return result
         except Exception as e:
-            logger.error(f"Failed to create reverse citations for {paper.arxiv_id}: {e}")
+            logger.error(f"Failed to create reverse citations for {cited_id}: {e}")
             raise
         
     def build_full_graph(self, paper: Paper) -> Dict[str, Any]:

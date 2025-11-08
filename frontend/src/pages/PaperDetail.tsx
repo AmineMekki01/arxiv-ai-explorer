@@ -310,6 +310,13 @@ export const PaperDetail: React.FC = () => {
           
           <Button
             variant="outlined"
+            onClick={() => navigate(`/paper/${encodeURIComponent(paper.arxiv_id)}/network`)}
+          >
+            Citation Network
+          </Button>
+          
+          <Button
+            variant="outlined"
             startIcon={<DownloadIcon />}
             href={`https://arxiv.org/pdf/${paper.arxiv_id}.pdf`}
             target="_blank"
