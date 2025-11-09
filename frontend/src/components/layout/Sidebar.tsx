@@ -54,13 +54,12 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
   const authedItems = [
     { text: 'Research Workspace', icon: <ScienceIcon />, path: '/research' },
     { text: 'For You', icon: <RecommendIcon />, path: '/recommendations' },
-    { text: 'Search', icon: <SearchIcon />, path: '/search' },
+    { text: 'Search History', icon: <SearchIcon />, path: '/search' },
     { text: 'Saved', icon: <BookmarkIcon />, path: '/saved' },
     { text: 'Liked', icon: <FavoriteBorderIcon />, path: '/liked' },
   ];
 
   const guestItems = [
-    { text: 'Search', icon: <SearchIcon />, path: '/search' },
     { text: 'Login', icon: <LoginIcon />, path: '/login' },
     { text: 'Register', icon: <PersonAddIcon />, path: '/register' },
   ];
