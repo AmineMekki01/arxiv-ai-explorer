@@ -10,14 +10,14 @@ interface BookmarkItem {
   paper_id?: number;
 }
 
-const SavedPapers: React.FC = () => {
+const LikedPapers: React.FC = () => {
   const [items, setItems] = useState<BookmarkItem[]>([]);
   const [loading, setLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
-    const res = await apiEndpoints.listSavedPapers();
-    console.log("saved papers : ", res.data)
+    const res = await apiEndpoints.listLikedPapers();
+    console.log("liked papers : ", res.data)
     setItems(res.data || []);
     setLoading(false);
   };
@@ -25,7 +25,7 @@ const SavedPapers: React.FC = () => {
   useEffect(() => { load(); }, []);
 
   const remove = async (arxiv_id: string) => {
-    const res = await apiEndpoints.unsavePaper(arxiv_id);
+    const res = await apiEndpoints.unlikePaper(arxiv_id);
     if (res.status === 200) {
       load();
     }
@@ -33,14 +33,14 @@ const SavedPapers: React.FC = () => {
 
   return (
     <Box sx={{ maxWidth: 1000, mx: 'auto' }}>
-      <Typography variant="h5" sx={{ mb: 2, fontWeight: 700 }}>Saved Papers</Typography>
+      <Typography variant="h5" sx={{ mb: 2, fontWeight: 700 }}>Liked Papers</Typography>
       {loading ? (
         <Paper variant="outlined" sx={{ p: 3 }}>
           <Typography color="text.secondary">Loading...</Typography>
         </Paper>
       ) : items.length === 0 ? (
         <Paper variant="outlined" sx={{ p: 3 }}>
-          <Typography color="text.secondary">No bookmarks yet. Use the Bookmark button on a paper to save it.</Typography>
+          <Typography color="text.secondary">No papers liked yet. Use the Like button on a paper to save it.</Typography>
         </Paper>
       ) : (
         <Paper variant="outlined">
@@ -77,4 +77,4 @@ const SavedPapers: React.FC = () => {
   );
 };
 
-export default SavedPapers;
+export default LikedPapers;

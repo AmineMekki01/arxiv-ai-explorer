@@ -107,7 +107,6 @@ async def query_agent(
                 "session_info": session_info
             }
         else:
-            # Log history with unknown sources length
             try:
                 with get_sync_session() as db:
                     db.add(SearchHistory(
@@ -209,7 +208,6 @@ async def query_agent_post(request: QueryRequest, current_user: User = Depends(r
                 "session_info": session_info
             }
         else:
-            # Log history when result is not dict
             try:
                 with get_sync_session() as db:
                     db.add(SearchHistory(

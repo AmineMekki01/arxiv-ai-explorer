@@ -10,30 +10,61 @@ import {
   Divider,
   Box,
   Typography,
+  Avatar,
+  IconButton,
+  Menu,
+  MenuItem,
+  Stack,
+  Tooltip,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import {
   Science as ScienceIcon,
   Search as SearchIcon,
   BookmarkBorder as BookmarkIcon,
+  Recommend as RecommendIcon,
+  FavoriteBorder as FavoriteBorderIcon,
+  Logout as LogoutIcon,
+  Login as LoginIcon,
+  PersonAdd as PersonAddIcon,
+  Science as AppIcon,
+  KeyboardArrowDown as ArrowDownIcon,
 } from '@mui/icons-material';
 import '../../styles/animations.css';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface SidebarProps {
   open: boolean;
   onClose: () => void;
 }
 
-const menuItems = [
-  { text: 'Research Workspace', icon: <ScienceIcon />, path: '/research' },
-  { text: 'Search', icon: <SearchIcon />, path: '/search' },
-  { text: 'Saved', icon: <BookmarkIcon />, path: '/saved' },
-];
-
-
 
 const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { isAuthenticated, logout, user } = useAuth();
+  const theme = useTheme();
+  const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
+  const [menuAnchor, setMenuAnchor] = React.useState<null | HTMLElement>(null);
+  const openMenu = Boolean(menuAnchor);
+  const handleMenuOpen = (e: React.MouseEvent<HTMLElement>) => setMenuAnchor(e.currentTarget);
+  const handleMenuClose = () => setMenuAnchor(null);
+
+  const authedItems = [
+    { text: 'Research Workspace', icon: <ScienceIcon />, path: '/research' },
+    { text: 'For You', icon: <RecommendIcon />, path: '/recommendations' },
+    { text: 'Search', icon: <SearchIcon />, path: '/search' },
+    { text: 'Saved', icon: <BookmarkIcon />, path: '/saved' },
+    { text: 'Liked', icon: <FavoriteBorderIcon />, path: '/liked' },
+  ];
+
+  const guestItems = [
+    { text: 'Search', icon: <SearchIcon />, path: '/search' },
+    { text: 'Login', icon: <LoginIcon />, path: '/login' },
+    { text: 'Register', icon: <PersonAddIcon />, path: '/register' },
+  ];
+
 
   const handleNavigation = (path: string) => {
     navigate(path);
@@ -53,10 +84,39 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
         borderRight: '1px solid rgba(15, 23, 42, 0.08)',
       }}
     >
-      <Box sx={{ p: 3, mt: 9 }}>
+      <Box sx={{ px: 2.5, pt: 2.5 }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+          <Stack direction="row" alignItems="center" spacing={1.5}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 40,
+                height: 40,
+                borderRadius: '10px',
+                background: 'linear-gradient(135deg, #2563EB 0%, #3B82F6 100%)',
+                boxShadow: '0 4px 14px rgba(37, 99, 235, 0.25)',
+              }}
+            >
+              <AppIcon sx={{ color: 'white', fontSize: 22 }} />
+            </Box>
+            <Box>
+              <Typography sx={{ fontWeight: 700, letterSpacing: '-0.02em' }}>arXiv AI Explorer</Typography>
+              <Typography variant="caption" color="text.secondary">Intelligent Research Assistant</Typography>
+            </Box>
+          </Stack>
+          {isSmall && (
+            <IconButton size="small" onClick={onClose} aria-label="Close sidebar">
+              <LogoutIcon sx={{ transform: 'rotate(180deg)' }} />
+            </IconButton>
+          )}
+        </Stack>
         <Typography 
           variant="caption" 
           sx={{ 
+            mt: 3,
+            display: 'block',
             color: 'text.secondary',
             fontWeight: 600,
             letterSpacing: '0.08em',
@@ -69,7 +129,7 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
       </Box>
       
       <List sx={{ flexGrow: 1, px: 2 }}>
-        {menuItems.map((item) => (
+        {(isAuthenticated ? authedItems : guestItems).map((item) => (
           <ListItem key={item.text} disablePadding sx={{ mb: 0.5 }}>
             <ListItemButton
               onClick={() => handleNavigation(item.path)}
@@ -123,28 +183,41 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onClose }) => {
       </List>
 
       <Divider sx={{ mx: 2, borderColor: 'rgba(15, 23, 42, 0.08)' }} />
-      
-      <Box sx={{ p: 3 }}>
-        <Typography 
-          variant="caption" 
-          sx={{ 
-            color: 'text.secondary',
-            fontSize: '0.75rem',
-            display: 'block',
-            textAlign: 'center',
-          }}
-        >
-          v1.0.0 Beta
-        </Typography>
-      </Box>
+
+      <List sx={{ px: 2, pb: 2 }}>
+        {isAuthenticated && (
+            <>
+              <Tooltip title={user?.username || user?.email}>
+                <IconButton size="small" onClick={handleMenuOpen} sx={{ ml: 1 }}>
+                  <Avatar sx={{ width: 28, height: 28 }}>
+                    {(user?.full_name || 'U').charAt(0).toUpperCase()}
+                  </Avatar>
+                   {user?.full_name}
+                  <ArrowDownIcon sx={{ ml: 0.5 }} />
+                </IconButton>
+              </Tooltip>
+              <Menu
+                anchorEl={menuAnchor}
+                open={openMenu}
+                onClose={handleMenuClose}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+              >
+                <MenuItem onClick={() => { handleMenuClose(); handleNavigation('/settings'); }}>Settings</MenuItem>
+                <MenuItem onClick={() => { handleMenuClose(); logout(); handleNavigation('/login'); }}>Logout</MenuItem>
+              </Menu>
+            </>
+          )}
+      </List>
     </Box>
   );
 
   return (
     <Drawer
-      variant="persistent"
+      variant={isSmall ? 'temporary' : 'persistent'}
       anchor="left"
       open={open}
+      onClose={onClose}
       sx={{
         width: open ? 260 : 0,
         transition: 'width 0.25s cubic-bezier(0.4, 0, 0.2, 1)',

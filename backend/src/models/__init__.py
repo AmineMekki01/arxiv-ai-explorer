@@ -1,7 +1,7 @@
 from .chat import Chat, Message
 from .user import User, UserPreferences
 from .paper import Paper
-from .bookmark import Bookmark
+from .paper_interaction import PaperSave, PaperLike, PaperShare, PaperView
 from .search_history import SearchHistory
 from .graph_models import (
     PaperNode, SimilarPaper, InfluentialPaper,
@@ -13,9 +13,11 @@ from .graph_models import (
 
 __all__ = [
     "User", "UserPreferences",
-    "Paper", "Bookmark", "SearchHistory",
+    "Paper", "SearchHistory",
     "PaperNode", "SimilarPaper", "InfluentialPaper",
     "CitationNetwork", "ResearchPath",
     "Collaborator",
     "TrendingConcept",
+    "PaperSave", "PaperLike", "PaperShare", "PaperView",
+    "Chat", "Message"
 ]
