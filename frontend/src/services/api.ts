@@ -73,9 +73,33 @@ export const apiEndpoints = {
   getPaperDetail: (arxivId: string) =>
     api.get(`/assistant/papers/${arxivId}/detail`),
 
-  listBookmarks: () => api.get('/bookmarks'),
-  addBookmark: (arxiv_id: string, title?: string) => api.post('/bookmarks', { arxiv_id, title }),
-  removeBookmark: (params: { arxiv_id?: string; id?: string }) => api.delete('/bookmarks', { params }),
+  listLikedPapers: () => api.get('/api/papers/like'),
+  likePaper: (arxiv_id: string, paper_title?: string) =>
+    api.post('/api/papers/like', { arxiv_id, paper_title }),
+  unlikePaper: (arxiv_id: string) =>
+    api.delete(`/api/papers/like/${encodeURIComponent(arxiv_id)}`),
+  checkIfLiked: (arxiv_id: string) =>
+    api.get(`/api/papers/like/${encodeURIComponent(arxiv_id)}/check`),
+
+  savePaper: (arxiv_id: string, paper_title?: string) =>
+    api.post('/api/papers/save', { arxiv_id, paper_title }),
+  unsavePaper: (arxiv_id: string) =>
+    api.delete(`/api/papers/save/${encodeURIComponent(arxiv_id)}`),
+  listSavedPapers: () => api.get('/api/papers/save'),
+  checkIfSaved: (arxiv_id: string) =>
+    api.get(`/api/papers/save/${encodeURIComponent(arxiv_id)}/check`),
+  
+  trackPaperView: (arxiv_id: string, paper_title?: string) => 
+    api.post('/api/papers/view', { arxiv_id, paper_title }),
+  
+  getUserStats: () => api.get('/api/papers/stats'),
+
+  getPaperStats: (arxiv_id: string) =>
+    api.get(`/api/papers/${encodeURIComponent(arxiv_id)}/stats`),
+
+  getRecommendations: (limit: number = 20, strategies?: string, offset?: number) => 
+    api.get('/api/recommendations', { params: { limit, strategies, offset } }),
+
 
   listHistory: (limit: number = 25) => api.get('/history', { params: { limit } }),
   clearHistory: async () => {
@@ -257,31 +281,6 @@ export const apiHelpers = {
       return { success: true, message: res.data.message, sources: res.data.sources || [], graph_insights: res.data.graph_insights || {} };
     } catch (e: any) {
       return { success: false, error: e.response?.data?.detail || 'Failed to send message' };
-    }
-  },
-
-  listBookmarks: async () => {
-    try {
-      const res = await apiEndpoints.listBookmarks();
-      return { success: true, items: res.data as Array<{ id: string; arxiv_id: string; title?: string; paper_id?: number }> };
-    } catch (e: any) {
-      return { success: false, error: e.response?.data?.detail || 'Failed to load bookmarks' };
-    }
-  },
-  addBookmark: async (arxiv_id: string, title?: string) => {
-    try {
-      const res = await apiEndpoints.addBookmark(arxiv_id, title);
-      return { success: true, item: res.data };
-    } catch (e: any) {
-      return { success: false, error: e.response?.data?.detail || 'Failed to add bookmark' };
-    }
-  },
-  removeBookmark: async (params: { arxiv_id?: string; id?: string }) => {
-    try {
-      const res = await apiEndpoints.removeBookmark(params);
-      return { success: true, data: res.data };
-    } catch (e: any) {
-      return { success: false, error: e.response?.data?.detail || 'Failed to remove bookmark' };
     }
   },
 

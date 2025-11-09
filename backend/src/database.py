@@ -93,6 +93,13 @@ def get_sync_session() -> Generator[Session, None, None]:
         finally:
             session.close()
 
+def provide_sync_session() -> Generator[Session, None, None]:
+    """FastAPI dependency that yields a sync Session.
+    Wraps get_sync_session() context manager for use with Depends().
+    """
+    with get_sync_session() as session:
+        yield session
+
 async def check_database_connection() -> bool:
     """Check if the database connection is working."""
     try:

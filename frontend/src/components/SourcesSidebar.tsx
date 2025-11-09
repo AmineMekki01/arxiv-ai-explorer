@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Drawer,
@@ -26,9 +26,9 @@ import {
   PushPin as PinIcon,
   Link as LinkIcon,
   Info as InfoIcon,
-  BookmarkBorder as BookmarkIcon,
+  Favorite as FavoriteIcon,
 } from '@mui/icons-material';
-import { apiHelpers } from '../services/api';
+import { apiEndpoints } from '../services/api';
 
 interface ChunkDetail {
   section: string;
@@ -67,7 +67,7 @@ export const SourcesSidebar: React.FC<SourcesSidebarProps> = ({
   const isFocused = (arxivId: string) =>
     focusedPapers.some((p) => p.arxiv_id === arxivId);
 
-  const [bookmarked, setBookmarked] = useState<Set<string>>(new Set());
+  const [savedPaper, setSavedPaper] = useState<Set<string>>(new Set());
   const [snack, setSnack] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>(
     { open: false, message: '', severity: 'success' }
   );
@@ -75,36 +75,38 @@ export const SourcesSidebar: React.FC<SourcesSidebarProps> = ({
   useEffect(() => {
     (async () => {
       try {
-        const res = await apiHelpers.listBookmarks();
-        if (res.success) {
-          const ids = new Set((res.items || []).map((b: any) => b.arxiv_id));
-          setBookmarked(ids);
+        const ids = new Set<string>();
+        const res = await apiEndpoints.listSavedPapers();
+        if (res.status === 200) {
+          ids.add((res.data || []).map((b: any) => b.arxiv_id));
+          console.log(ids);
+          setSavedPaper(ids);
         }
       } catch {}
     })();
   }, []);
 
-  const handleToggleBookmark = async (arxivId: string, title: string) => {
+  const handleTogglePaperSave = async (arxivId: string, title: string) => {
     try {
-      if (bookmarked.has(arxivId)) {
-        const res = await apiHelpers.removeBookmark({ arxiv_id: arxivId });
-        if (res.success) {
-          setBookmarked((prev) => {
+      if (savedPaper.has(arxivId)) {
+        const res = await apiEndpoints.unsavePaper(arxivId);
+        if (res.status === 200) {
+          setSavedPaper((prev) => {
             const next = new Set(prev);
             next.delete(arxivId);
             return next;
           });
-          setSnack({ open: true, message: 'Removed bookmark', severity: 'success' });
+          setSnack({ open: true, message: 'Removed from saved papers', severity: 'success' });
         }
       } else {
-        const res = await apiHelpers.addBookmark(arxivId, title);
-        if (res.success) {
-          setBookmarked((prev) => new Set(prev).add(arxivId));
-          setSnack({ open: true, message: 'Saved to bookmarks', severity: 'success' });
+        const res = await apiEndpoints.savePaper(arxivId, title);
+        if (res.status === 200) {
+          setSavedPaper((prev) => new Set(prev).add(arxivId));
+          setSnack({ open: true, message: 'Saved to saved papers', severity: 'success' });
         }
       }
     } catch {
-      setSnack({ open: true, message: 'Bookmark action failed', severity: 'error' });
+      setSnack({ open: true, message: 'Save action failed', severity: 'error' });
     }
   };
 
@@ -300,12 +302,12 @@ export const SourcesSidebar: React.FC<SourcesSidebarProps> = ({
                       </Button>
                       <Button
                         size="small"
-                        variant={bookmarked.has(source.arxiv_id) ? 'contained' : 'outlined'}
-                        color={bookmarked.has(source.arxiv_id) ? 'secondary' : 'primary'}
-                        startIcon={<BookmarkIcon />}
-                        onClick={() => handleToggleBookmark(source.arxiv_id, source.title)}
+                        variant={savedPaper.has(source.arxiv_id) ? 'contained' : 'outlined'}
+                        color={savedPaper.has(source.arxiv_id) ? 'secondary' : 'primary'}
+                        startIcon={<FavoriteIcon />}
+                        onClick={() => handleTogglePaperSave(source.arxiv_id, source.title)}
                       >
-                        {bookmarked.has(source.arxiv_id) ? 'Bookmarked' : 'Bookmark'}
+                        {savedPaper.has(source.arxiv_id) ? 'Saved' : 'Save'}
                       </Button>
                       {onFocusPaper && (
                         <Button
