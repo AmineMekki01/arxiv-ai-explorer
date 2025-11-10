@@ -127,10 +127,10 @@ export const PaperDetail: React.FC = () => {
     try {
       setSaveLoading(true);
       if (isSaved) {
-        await apiEndpoints.savePaper(paper.arxiv_id , paper.title);
+        await apiEndpoints.unsavePaper(paper.arxiv_id);
         setIsSaved(false);
       } else {
-        await apiEndpoints.unsavePaper(paper.arxiv_id);
+        await apiEndpoints.savePaper(paper.arxiv_id , paper.title);
         setIsSaved(true);
       }
     } catch (e) {

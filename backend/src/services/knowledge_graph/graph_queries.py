@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 from loguru import logger
+from src.utils.arxiv_utils import normalize_arxiv_id
 
 from .neo4j_client import Neo4jClient
 
@@ -92,8 +93,9 @@ class GraphQueryService:
             LIMIT $limit
             """
             
+        canonical = normalize_arxiv_id(arxiv_id)
         parameters = {
-            "arxiv_id": arxiv_id,
+            "arxiv_id": canonical,
             "limit": limit
         }
         
@@ -127,12 +129,16 @@ class GraphQueryService:
             OPTIONAL MATCH (citing:Paper)-[ci:CITES]->(p)
             RETURN collect(DISTINCT {
                        arxiv_id: cited.arxiv_id,
+                       s2_paper_id: cited.s2_paper_id,
+                       doi: cited.doi,
                        title: cited.title,
                        citation_count: cited.citation_count,
                        is_seminal: cited.is_highly_cited
                    }) as cited_papers,
                    collect(DISTINCT {
                        arxiv_id: citing.arxiv_id,
+                       s2_paper_id: citing.s2_paper_id,
+                       doi: citing.doi,
                        title: citing.title,
                        citation_count: citing.citation_count,
                        is_seminal: citing.is_highly_cited
@@ -145,12 +151,16 @@ class GraphQueryService:
             OPTIONAL MATCH path2 = (citing:Paper)-[:CITES*1..2]->(p)
             WITH collect(DISTINCT {
                        arxiv_id: cited.arxiv_id,
+                       s2_paper_id: cited.s2_paper_id,
+                       doi: cited.doi,
                        title: cited.title,
                        citation_count: cited.citation_count,
                        is_seminal: cited.is_highly_cited
                    }) as cited_papers,
                  collect(DISTINCT {
                        arxiv_id: citing.arxiv_id,
+                       s2_paper_id: citing.s2_paper_id,
+                       doi: citing.doi,
                        title: citing.title,
                        citation_count: citing.citation_count,
                        is_seminal: citing.is_highly_cited
@@ -164,12 +174,16 @@ class GraphQueryService:
             OPTIONAL MATCH path2 = (citing:Paper)-[:CITES*1..3]->(p)
             WITH collect(DISTINCT {
                        arxiv_id: cited.arxiv_id,
+                       s2_paper_id: cited.s2_paper_id,
+                       doi: cited.doi,
                        title: cited.title,
                        citation_count: cited.citation_count,
                        is_seminal: cited.is_highly_cited
                    }) as cited_papers,
                  collect(DISTINCT {
                        arxiv_id: citing.arxiv_id,
+                       s2_paper_id: citing.s2_paper_id,
+                       doi: citing.doi,
                        title: citing.title,
                        citation_count: citing.citation_count,
                        is_seminal: citing.is_highly_cited
@@ -177,15 +191,16 @@ class GraphQueryService:
             RETURN cited_papers, citing_papers
             """
             
-        parameters = {"arxiv_id": arxiv_id}
+        canonical = normalize_arxiv_id(arxiv_id)
+        parameters = {"arxiv_id": canonical}
         
         try:
             results = self.client.execute_query(query, parameters)
             logger.info(f"Retrieved citation network for {arxiv_id} at depth {depth}")
             if results and len(results) > 0:
                 result = results[0]
-                cited = [p for p in result.get("cited_papers", []) if p and p.get("arxiv_id")]
-                citing = [p for p in result.get("citing_papers", []) if p and p.get("arxiv_id")]
+                cited = [p for p in result.get("cited_papers", []) if p]
+                citing = [p for p in result.get("citing_papers", []) if p]
                 logger.info(f"Found {len(cited)} cited papers and {len(citing)} citing papers")
                 return {"cited_papers": cited, "citing_papers": citing}
             return {"cited_papers": [], "citing_papers": []}
@@ -221,9 +236,11 @@ class GraphQueryService:
         }] as path
         """ % max_hops
         
+        from_canonical = normalize_arxiv_id(from_arxiv_id)
+        to_canonical = normalize_arxiv_id(to_arxiv_id)
         parameters = {
-            "from_id": from_arxiv_id,
-            "to_id": to_arxiv_id
+            "from_id": from_canonical,
+            "to_id": to_canonical
         }
         
         try:
@@ -435,7 +452,8 @@ class GraphQueryService:
                collect(DISTINCT citing.arxiv_id) as cited_by
         """
         
-        parameters = {"arxiv_id": arxiv_id}
+        canonical = normalize_arxiv_id(arxiv_id)
+        parameters = {"arxiv_id": canonical}
         
         try:
             results = self.client.execute_query(query, parameters)

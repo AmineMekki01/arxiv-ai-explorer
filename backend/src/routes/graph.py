@@ -71,18 +71,34 @@ async def get_citation_network(
             cited_raw = result.get("cited_papers", [])
             citing_raw = result.get("citing_papers", [])
             
+            def to_external_url(item: dict) -> str:
+                aid = item.get("arxiv_id")
+                doi = item.get("doi")
+                s2 = item.get("s2_paper_id")
+                if aid:
+                    return f"https://arxiv.org/abs/{aid}"
+                if doi:
+                    return f"https://doi.org/{doi}"
+                if s2:
+                    return f"https://www.semanticscholar.org/paper/{s2}"
+                return ""
+
             cited = []
             for p in cited_raw:
                 if p is None:
                     continue
                 if isinstance(p, dict):
+                    p["external_url"] = to_external_url(p)
                     cited.append(PaperNode(**p))
                 else:
                     cited.append(PaperNode(
                         arxiv_id=p.get('arxiv_id'),
+                        s2_paper_id=p.get('s2_paper_id'),
+                        doi=p.get('doi'),
                         title=p.get('title'),
                         citation_count=p.get('citation_count'),
-                        is_seminal=p.get('is_highly_cited', False)
+                        is_seminal=p.get('is_highly_cited', False),
+                        external_url=to_external_url(p)
                     ))
             
             citing = []
@@ -90,13 +106,17 @@ async def get_citation_network(
                 if p is None:
                     continue
                 if isinstance(p, dict):
+                    p["external_url"] = to_external_url(p)
                     citing.append(PaperNode(**p))
                 else:
                     citing.append(PaperNode(
                         arxiv_id=p.get('arxiv_id'),
+                        s2_paper_id=p.get('s2_paper_id'),
+                        doi=p.get('doi'),
                         title=p.get('title'),
                         citation_count=p.get('citation_count'),
-                        is_seminal=p.get('is_highly_cited', False)
+                        is_seminal=p.get('is_highly_cited', False),
+                        external_url=to_external_url(p)
                     ))
 
             logger.info(f"Returning {len(cited)} cited papers and {len(citing)} citing papers")

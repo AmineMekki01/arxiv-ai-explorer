@@ -42,7 +42,7 @@ class FetchArxivOperator(BaseOperator):
         self.since_days = since_days
 
     def execute(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        client = ArxivClient()        
+        client = ArxivClient(rate_limit=0.3)        
         papers = []
         for category in self.categories:
             try:
@@ -89,7 +89,7 @@ class ParsePDFOperator(BaseOperator):
         from src.services.arxiv.client import ArxivClient
         from src.services.pdf_parser.factory import make_pdf_parser_service
         
-        arxiv_client = ArxivClient()
+        arxiv_client = ArxivClient(rate_limit=0.3)
         pdf_parser = make_pdf_parser_service()
         
         parsed_papers = []

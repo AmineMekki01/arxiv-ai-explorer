@@ -156,8 +156,9 @@ class KnowledgeGraphBuilder:
         MERGE (p)-[r2:BELONGS_TO_SUB {is_primary: cat.is_primary}]->(sc)
         """
         
+        canonical_id = normalize_arxiv_id(paper.arxiv_id)
         parameters = {
-            "arxiv_id": paper.arxiv_id,
+            "arxiv_id": canonical_id,
             "categories": categories,
             "citation_count": paper.citation_count or 0
         }
@@ -223,8 +224,9 @@ class KnowledgeGraphBuilder:
             r.created_at = datetime()
         """
         
+        canonical_id = normalize_arxiv_id(paper.arxiv_id)
         parameters = {
-            "arxiv_id": paper.arxiv_id,
+            "arxiv_id": canonical_id,
             "authors": authors_data,
             "citation_count": paper.citation_count or 0,
             "published_date": paper.published_date.isoformat() if paper.published_date else None
@@ -265,8 +267,9 @@ class KnowledgeGraphBuilder:
         ON CREATE SET r.created_at = datetime()
         """
         
+        canonical_id = normalize_arxiv_id(paper.arxiv_id)
         parameters = {
-            "arxiv_id": paper.arxiv_id,
+            "arxiv_id": canonical_id,
             "affiliations": unique_affiliations,
             "citation_count": paper.citation_count or 0
         }
@@ -304,8 +307,9 @@ class KnowledgeGraphBuilder:
         ON CREATE SET r.created_at = datetime()
         """
         
+        canonical_id = normalize_arxiv_id(paper.arxiv_id)
         parameters = {
-            "arxiv_id": paper.arxiv_id,
+            "arxiv_id": canonical_id,
             "year": year,
             "citation_count": paper.citation_count or 0
         }
@@ -331,16 +335,21 @@ class KnowledgeGraphBuilder:
         citations = []
         for ref in paper.references:
             arxiv_id = ref.get("arxiv_id")
-            if arxiv_id:
-                normalized_cited_id = normalize_arxiv_id(arxiv_id)
-                citations.append({
-                    "arxiv_id": normalized_cited_id,
-                    "original_arxiv_id": arxiv_id,
-                    "s2_paper_id": ref.get("s2_paper_id"),
-                    "title": ref.get("title", ""),
-                    "year": ref.get("year"),
-                    "is_influential": ref.get("is_influential", False)
-                })
+            s2_id = ref.get("s2_paper_id")
+            doi = ref.get("doi")
+            norm_arxiv = normalize_arxiv_id(arxiv_id) if arxiv_id else None
+            # Skip if we have none of the identifiers
+            if not (norm_arxiv or s2_id or doi):
+                continue
+            citations.append({
+                "arxiv_id": norm_arxiv,
+                "original_arxiv_id": arxiv_id,
+                "s2_paper_id": s2_id,
+                "doi": doi,
+                "title": ref.get("title", ""),
+                "year": ref.get("year"),
+                "is_influential": ref.get("is_influential", False)
+            })
         
         if not citations:
             return {"relationships_created": 0}
@@ -348,15 +357,40 @@ class KnowledgeGraphBuilder:
         query = """
         MATCH (citing:Paper {arxiv_id: $citing_id})
         UNWIND $citations AS citation
+        WITH citing, citation
+        WHERE citation.arxiv_id IS NOT NULL OR citation.s2_paper_id IS NOT NULL OR citation.doi IS NOT NULL
+
+        OPTIONAL MATCH (n1:Paper {arxiv_id: citation.arxiv_id})
+        OPTIONAL MATCH (n2:Paper {s2_paper_id: citation.s2_paper_id})
+        OPTIONAL MATCH (n3:Paper {doi: citation.doi})
+        WITH citing, citation, coalesce(n1, n2, n3) AS citedExisting
+
+        FOREACH (_ IN CASE WHEN citedExisting IS NULL AND citation.arxiv_id IS NOT NULL THEN [1] ELSE [] END |
+          MERGE (:Paper {arxiv_id: citation.arxiv_id})
+        )
+        FOREACH (_ IN CASE WHEN citedExisting IS NULL AND citation.arxiv_id IS NULL AND citation.s2_paper_id IS NOT NULL THEN [1] ELSE [] END |
+          MERGE (:Paper {s2_paper_id: citation.s2_paper_id})
+        )
+        FOREACH (_ IN CASE WHEN citedExisting IS NULL AND citation.arxiv_id IS NULL AND citation.s2_paper_id IS NULL AND citation.doi IS NOT NULL THEN [1] ELSE [] END |
+          MERGE (:Paper {doi: citation.doi})
+        )
+
+        WITH citing, citation
+        OPTIONAL MATCH (m1:Paper {arxiv_id: citation.arxiv_id})
+        OPTIONAL MATCH (m2:Paper {s2_paper_id: citation.s2_paper_id})
+        OPTIONAL MATCH (m3:Paper {doi: citation.doi})
+        WITH citing, citation, coalesce(m1, m2, m3) AS cited
+        WITH citing, citation, cited
+        WHERE cited IS NOT NULL
         
-        MERGE (cited:Paper {arxiv_id: citation.arxiv_id})
-        ON CREATE SET 
-            cited.title = citation.title,
-            cited.original_arxiv_id = citation.original_arxiv_id,
-            cited.s2_paper_id = citation.s2_paper_id,
+        SET cited.title = coalesce(citation.title, cited.title),
+            cited.original_arxiv_id = coalesce(citation.original_arxiv_id, cited.original_arxiv_id),
+            cited.s2_paper_id = coalesce(citation.s2_paper_id, cited.s2_paper_id),
+            cited.doi = coalesce(citation.doi, cited.doi),
             cited.is_external = true,
-            cited.published_year = citation.year,
-            cited.created_at = datetime()
+            cited.published_year = coalesce(citation.year, cited.published_year),
+            cited.updated_at = datetime(),
+            cited.created_at = coalesce(cited.created_at, datetime())
         
         MERGE (citing)-[r:CITES]->(cited)
         ON CREATE SET 
@@ -365,7 +399,6 @@ class KnowledgeGraphBuilder:
         ON MATCH SET
             r.is_influential = citation.is_influential
         
-        // Create special BUILDS_ON relationship for influential citations
         WITH citing, cited, citation
         WHERE citation.is_influential = true
         MERGE (citing)-[b:BUILDS_ON]->(cited)
@@ -398,15 +431,19 @@ class KnowledgeGraphBuilder:
         citing_papers = []
         for citing in paper.cited_by:
             arxiv_id = citing.get("arxiv_id")
-            if arxiv_id:
-                normalized_citing_id = normalize_arxiv_id(arxiv_id)
-                citing_papers.append({
-                    "arxiv_id": normalized_citing_id,
-                    "original_arxiv_id": arxiv_id,
-                    "s2_paper_id": citing.get("s2_paper_id"),
-                    "title": citing.get("title", ""),
-                    "year": citing.get("year")
-                })
+            s2_id = citing.get("s2_paper_id")
+            doi = citing.get("doi")
+            norm_arxiv = normalize_arxiv_id(arxiv_id) if arxiv_id else None
+            if not (norm_arxiv or s2_id or doi):
+                continue
+            citing_papers.append({
+                "arxiv_id": norm_arxiv,
+                "original_arxiv_id": arxiv_id,
+                "s2_paper_id": s2_id,
+                "doi": doi,
+                "title": citing.get("title", ""),
+                "year": citing.get("year")
+            })
         
         if not citing_papers:
             return {"relationships_created": 0}
@@ -414,15 +451,40 @@ class KnowledgeGraphBuilder:
         query = """
         MATCH (cited:Paper {arxiv_id: $cited_id})
         UNWIND $citing_papers AS citing_paper
+        WITH cited, citing_paper
+        WHERE citing_paper.arxiv_id IS NOT NULL OR citing_paper.s2_paper_id IS NOT NULL OR citing_paper.doi IS NOT NULL
+
+        OPTIONAL MATCH (n1:Paper {arxiv_id: citing_paper.arxiv_id})
+        OPTIONAL MATCH (n2:Paper {s2_paper_id: citing_paper.s2_paper_id})
+        OPTIONAL MATCH (n3:Paper {doi: citing_paper.doi})
+        WITH cited, citing_paper, coalesce(n1, n2, n3) AS citingExisting
+
+        FOREACH (_ IN CASE WHEN citingExisting IS NULL AND citing_paper.arxiv_id IS NOT NULL THEN [1] ELSE [] END |
+          MERGE (:Paper {arxiv_id: citing_paper.arxiv_id})
+        )
+        FOREACH (_ IN CASE WHEN citingExisting IS NULL AND citing_paper.arxiv_id IS NULL AND citing_paper.s2_paper_id IS NOT NULL THEN [1] ELSE [] END |
+          MERGE (:Paper {s2_paper_id: citing_paper.s2_paper_id})
+        )
+        FOREACH (_ IN CASE WHEN citingExisting IS NULL AND citing_paper.arxiv_id IS NULL AND citing_paper.s2_paper_id IS NULL AND citing_paper.doi IS NOT NULL THEN [1] ELSE [] END |
+          MERGE (:Paper {doi: citing_paper.doi})
+        )
+
+        WITH cited, citing_paper
+        OPTIONAL MATCH (m1:Paper {arxiv_id: citing_paper.arxiv_id})
+        OPTIONAL MATCH (m2:Paper {s2_paper_id: citing_paper.s2_paper_id})
+        OPTIONAL MATCH (m3:Paper {doi: citing_paper.doi})
+        WITH cited, citing_paper, coalesce(m1, m2, m3) AS citing
+        WITH cited, citing_paper, citing
+        WHERE citing IS NOT NULL
         
-        MERGE (citing:Paper {arxiv_id: citing_paper.arxiv_id})
-        ON CREATE SET 
-            citing.title = citing_paper.title,
-            citing.original_arxiv_id = citing_paper.original_arxiv_id,
-            citing.s2_paper_id = citing_paper.s2_paper_id,
+        SET citing.title = coalesce(citing_paper.title, citing.title),
+            citing.original_arxiv_id = coalesce(citing_paper.original_arxiv_id, citing.original_arxiv_id),
+            citing.s2_paper_id = coalesce(citing_paper.s2_paper_id, citing.s2_paper_id),
+            citing.doi = coalesce(citing_paper.doi, citing.doi),
             citing.is_external = true,
-            citing.published_year = citing_paper.year,
-            citing.created_at = datetime()
+            citing.published_year = coalesce(citing_paper.year, citing.published_year),
+            citing.updated_at = datetime(),
+            citing.created_at = coalesce(citing.created_at, datetime())
         
         MERGE (citing)-[r:CITES]->(cited)
         ON CREATE SET r.created_at = datetime()

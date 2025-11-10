@@ -330,13 +330,13 @@ class UpdateCitationNetworkOperator(BaseOperator):
                 
                 for idx, paper in enumerate(papers, 1):
                     try:
-                        self.log.info(f"[{idx}/{len(papers)}] Updating citations for {paper["arxiv_id"]}")
+                        self.log.info(f"[{idx}/{len(papers)}] Updating citations for {paper.arxiv_id}")
                         
                         delete_query = """
                         MATCH (p:Paper {arxiv_id: $arxiv_id})-[r:CITES]->()
                         DELETE r
                         """
-                        client.execute_write(delete_query, {"arxiv_id": paper["arxiv_id"]})
+                        client.execute_write(delete_query, {"arxiv_id": paper.arxiv_id})
                         
                         if paper.references:
                             builder.create_citation_relationships(paper)
@@ -345,11 +345,11 @@ class UpdateCitationNetworkOperator(BaseOperator):
                             builder.create_reverse_citations(paper)
                         
                         updated_count += 1
-                        self.log.info(f"Updated citations for {paper["arxiv_id"]}")
+                        self.log.info(f"Updated citations for {paper.arxiv_id}")
                         
                     except Exception as e:
                         self.log.error(f"paper {paper}")
-                        self.log.error(f"Failed to update citations for {paper["arxiv_id"]}: {e}")
+                        self.log.error(f"Failed to update citations for {getattr(paper, 'arxiv_id', None)}: {e}")
                 
         except Exception as e:
             self.log.error(f"Citation network update failed: {e}")

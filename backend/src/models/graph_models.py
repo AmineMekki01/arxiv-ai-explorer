@@ -4,10 +4,15 @@ from pydantic import BaseModel
 
 class PaperNode(BaseModel):
     """Paper node in the knowledge graph."""
-    arxiv_id: str
+    arxiv_id: Optional[str] = None
+    s2_paper_id: Optional[str] = None
+    doi: Optional[str] = None
     title: str
     published_date: Optional[str] = None
+    citation_count: Optional[int] = None
+    is_seminal: Optional[bool] = None
     is_external: bool = False
+    external_url: Optional[str] = None
 
 
 class SimilarPaper(PaperNode):

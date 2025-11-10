@@ -123,6 +123,7 @@ class Neo4jClient:
         """Create database constraints for data integrity."""
         constraints = [
             "CREATE CONSTRAINT paper_arxiv_id IF NOT EXISTS FOR (p:Paper) REQUIRE p.arxiv_id IS UNIQUE",
+            "CREATE CONSTRAINT paper_s2_id IF NOT EXISTS FOR (p:Paper) REQUIRE p.s2_paper_id IS UNIQUE",
             "CREATE CONSTRAINT author_id IF NOT EXISTS FOR (a:Author) REQUIRE a.author_id IS UNIQUE",
             "CREATE CONSTRAINT main_category_code IF NOT EXISTS FOR (mc:MainCategory) REQUIRE mc.code IS UNIQUE",
             "CREATE CONSTRAINT sub_category_code IF NOT EXISTS FOR (sc:SubCategory) REQUIRE sc.code IS UNIQUE",
@@ -144,6 +145,8 @@ class Neo4jClient:
             "CREATE INDEX paper_date IF NOT EXISTS FOR (p:Paper) ON (p.published_date)",
             "CREATE INDEX paper_year IF NOT EXISTS FOR (p:Paper) ON (p.published_year)",
             "CREATE INDEX paper_category IF NOT EXISTS FOR (p:Paper) ON (p.primary_category)",
+            "CREATE INDEX paper_s2_id IF NOT EXISTS FOR (p:Paper) ON (p.s2_paper_id)",
+            "CREATE INDEX paper_doi IF NOT EXISTS FOR (p:Paper) ON (p.doi)",
             "CREATE INDEX author_name IF NOT EXISTS FOR (a:Author) ON (a.name)",
             "CREATE INDEX author_normalized IF NOT EXISTS FOR (a:Author) ON (a.normalized_name)",
             "CREATE INDEX main_category_code IF NOT EXISTS FOR (mc:MainCategory) ON (mc.code)",
