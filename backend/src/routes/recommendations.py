@@ -33,6 +33,7 @@ class RecommendationResponse(BaseModel):
     citation_count: int
     recommendation_score: float
     thumbnail_url: str
+    reasons: List[str] = []
 
 
 class UserStatsResponse(BaseModel):
@@ -73,7 +74,17 @@ async def get_recommendations(
     try:
         strategy_list = None
         if strategies:
-            strategy_list = [s.strip() for s in strategies.split(",")]
+            raw_list = [s.strip().lower() for s in strategies.split(",") if s.strip()]
+            normalized = []
+            for s in raw_list:
+                if s == "citation":
+                    normalized.append("graph")
+                elif s in {"content", "graph", "semantic", "trending", "collaborative"}:
+                    normalized.append(s)
+                else:
+                    continue
+            strategy_list = normalized
+            logger.info(f"/api/recommendations resolved strategies: {strategy_list}")
         
         neo4j_client = None
         try:

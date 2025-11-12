@@ -38,6 +38,7 @@ interface RecommendedPaper {
   citation_count: number;
   recommendation_score: number;
   thumbnail_url?: string | null;
+  reasons?: string[];
 }
 
 interface UserStats {
@@ -73,7 +74,7 @@ const Recommendations: React.FC = () => {
   const LIMIT = 20;
 
   const fetchPage = async (targetPage: number, strategy: string) => {
-    const strategies = strategy === 'all' ? 'content,citation,collaborative,trending' : strategy;
+    const strategies = strategy === 'all' ? 'semantic,content,citation,collaborative,trending' : strategy;
     const offset = targetPage * LIMIT;
     const isFirstPage = targetPage === 0;
     try {
@@ -132,6 +133,9 @@ const Recommendations: React.FC = () => {
   const strategyOptions = [
     { value: 'all', label: 'All Strategies', icon: '🎯' },
     { value: 'content', label: 'Similar to What You Like', icon: '📚' },
+    { value: 'semantic', label: 'Semantic (Qdrant)', icon: '🧠' },
+    { value: 'citation', label: 'Graph (Citations)', icon: '🕸️' },
+    { value: 'trending', label: 'Trending', icon: '📈' },
   ];
 
   return (
@@ -342,6 +346,10 @@ const Recommendations: React.FC = () => {
                     <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
                       {paper.categories.slice(0, 3).map((cat) => (
                         <Chip key={cat} label={cat} size="small" color={categoryColor(cat)} variant="outlined" />
+                      ))}
+                      {/* Reasons (why recomended) */}
+                      {paper.reasons && paper.reasons.slice(0, 2).map((reason, idx) => (
+                        <Chip key={`r-${paper.arxiv_id}-${idx}`} label={reason} size="small" variant="filled" color="default" sx={{ ml: 0.5 }} />
                       ))}
                     </Stack>
                     

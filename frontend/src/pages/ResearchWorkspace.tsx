@@ -408,8 +408,38 @@ const ResearchWorkspace: React.FC = () => {
   };
 
   const handleSendMessage = async () => {
-    if (!chatId) return;
     if (!currentMessage.trim() || isLoading) return;
+    let targetChatId = chatId;
+    if (!targetChatId) {
+      try {
+        const res = await apiHelpers.createChat();
+        if (res.success && res.chat?.id) {
+          targetChatId = res.chat.id;
+          sessionStorage.setItem('current_chat_id', targetChatId);
+          setChatId(targetChatId);
+          navigate(`/research/${targetChatId}`);
+          await loadMessages(targetChatId);
+        } else {
+          const errMsg: Message = {
+            id: (Date.now()).toString(),
+            type: 'assistant',
+            content: 'Please create a chat first (or try again). Failed to auto-create chat.',
+            timestamp: new Date(),
+          };
+          setMessages(prev => [...prev, errMsg]);
+          return;
+        }
+      } catch (e) {
+        const errMsg: Message = {
+          id: (Date.now()).toString(),
+          type: 'assistant',
+          content: 'Could not create a new chat. Please ensure you are logged in and try again.',
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, errMsg]);
+        return;
+      }
+    }
     const clientMsgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const userMessage: Message = {
       id: clientMsgId,
@@ -423,7 +453,7 @@ const ResearchWorkspace: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const res = await apiHelpers.sendMessage(chatId, 'user', currentMessage, clientMsgId);
+      const res = await apiHelpers.sendMessage(targetChatId, 'user', currentMessage, clientMsgId);
       
       if (res.success && res.message) {
         const assistantMessage: Message = {
