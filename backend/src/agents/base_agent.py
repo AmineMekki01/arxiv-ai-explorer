@@ -6,7 +6,7 @@ from agents import Agent, ModelSettings, Runner
 from src.agents.tools import search_papers, search_papers_with_graph, get_paper_details
 from src.agents.prompts import RESEARCH_ASSISTANT_PROMPT
 from src.agents.session_factory import SessionFactory, get_session_recommendations
-from src.agents.context_management import SessionABC
+from src.agents.context_management import SessionABC, FileBackedSession
 from src.config import get_settings
 from src.core import logger
 
@@ -367,6 +367,9 @@ class BaseAgent:
                     storage_dir=self.conversations_dir
                 )
                 
+                if isinstance(new_session, FileBackedSession):
+                    new_session._loaded = True 
+
                 if history:
                     await new_session.add_items(history)
                 
