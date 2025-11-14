@@ -6,17 +6,29 @@ from src.config import get_settings
 from src.database import get_sync_session
 
 from qdrant_client import QdrantClient
-from src.services.embeddings.multi_vector_embedder import MultiVectorEmbedder
+from src.services.embeddings.multi_vector_embedder import get_shared_embedder
 
 settings = get_settings()
+
+_shared_qdrant: Optional[QdrantClient] = None
+_shared_retriever: Optional["Retriever"] = None
+
+
+def get_qdrant_client() -> QdrantClient:
+    """Return a process-wide shared Qdrant client instance."""
+    global _shared_qdrant
+    if _shared_qdrant is None:
+        _shared_qdrant = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    return _shared_qdrant
+
 
 class Retriever:
     def __init__(self) -> None:
 
         self._db_session_ctx = get_sync_session
 
-        self._qdrant = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
-        self._embedder = MultiVectorEmbedder()
+        self._qdrant = get_qdrant_client()
+        self._embedder = get_shared_embedder()
 
 
     def vector_search(
@@ -112,5 +124,10 @@ class Retriever:
             )
         return results
 
+
 def get_retriever() -> Retriever:
-    return Retriever()
+    """Return a process-wide shared Retriever instance."""
+    global _shared_retriever
+    if _shared_retriever is None:
+        _shared_retriever = Retriever()
+    return _shared_retriever

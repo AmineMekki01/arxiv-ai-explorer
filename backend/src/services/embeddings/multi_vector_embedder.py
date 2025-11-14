@@ -1,5 +1,5 @@
 """Multi-vector embedding service using fastembed for dense and sparse (BM25) embeddings."""
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import logging
 
 from fastembed import TextEmbedding, SparseTextEmbedding
@@ -125,3 +125,12 @@ class MultiVectorEmbedder:
             "dense": "all-MiniLM-L6-v2",
             "sparse": "bm25",
         }
+
+_shared_embedder: Optional[MultiVectorEmbedder] = None
+
+def get_shared_embedder() -> MultiVectorEmbedder:
+    """Return a process-wide shared MultiVectorEmbedder instance."""
+    global _shared_embedder
+    if _shared_embedder is None:
+        _shared_embedder = MultiVectorEmbedder()
+    return _shared_embedder
