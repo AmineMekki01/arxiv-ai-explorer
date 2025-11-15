@@ -129,7 +129,7 @@ class PaperRecommender:
                 fallback_scores: Dict[str, float] = {}
                 top_cat_set = set(top_categories)
                 for p in candidates:
-                    if p.arxiv_id in saved_arxiv_ids:
+                    if p.arxiv_id in recent_interacted_ids:
                         continue
                     if not p.categories:
                         continue
