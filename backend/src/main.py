@@ -9,6 +9,7 @@ from src.database import check_database_connection, create_tables
 from src.core import logger
 from src.models.paper import Paper
 from src.models.user import User, UserPreferences
+from src.services.knowledge_graph.neo4j_client import close_shared_driver
 from src.routes.assistant import router as assistant_router
 from src.routes.search import router as search_router
 from src.routes.chat import router as chat_router
@@ -38,7 +39,12 @@ async def lifespan(app: FastAPI):
         
         logger.info("ResearchMind application started")
         yield
-        
+
+        try:
+            close_shared_driver()
+        except Exception as e:
+            logger.error(f"Error while closing Neo4j driver during shutdown: {e}")
+
     except Exception as e:
         logger.error(f"Failed to start ResearchMind application: {e}")
         raise
