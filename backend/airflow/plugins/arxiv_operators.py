@@ -280,6 +280,7 @@ class PersistDBOperator(BaseOperator):
             
         persisted = 0
         skipped = 0
+        updated = 0
         processed_ids: List[str] = []
         
         try:
@@ -305,6 +306,7 @@ class PersistDBOperator(BaseOperator):
                                         setattr(existing, key, value)
                                     except Exception as e:
                                         self.log.error(f"Error updating field {key}: {e}")
+                            updated += 1
                             skipped += 1
                             self.log.info(f"Updated existing paper {data.get('arxiv_id')}")
                             processed_ids.append(data.get("arxiv_id"))
@@ -331,8 +333,10 @@ class PersistDBOperator(BaseOperator):
                         skipped += 1
                         continue
                 
-                if persisted > 0:
-                    self.log.info(f"Committing session with {persisted} new papers and {skipped} skipped...")
+                if persisted > 0 or updated > 0:
+                    self.log.info(
+                        f"Committing session with {persisted} new papers, {updated} updated, and {skipped} skipped..."
+                    )
                     try:
                         session.commit()
                         self.log.info("Session committed successfully")
@@ -344,6 +348,7 @@ class PersistDBOperator(BaseOperator):
                 unique_ids = sorted(set([pid for pid in processed_ids if pid]))
                 return {
                     "persisted": persisted,
+                    "updated": updated,
                     "skipped": skipped,
                     "papers": [{"arxiv_id": aid} for aid in unique_ids]
                 }
