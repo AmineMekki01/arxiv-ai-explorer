@@ -26,10 +26,7 @@ export const apiEndpoints = {
   
   queryAssistant: (query: string, chatId: string, conversationType: string = 'research') => 
     api.get(`/assistant?q=${encodeURIComponent(query)}&chat_id=${chatId}&conversation_type=${conversationType}`),
-  
-  queryAssistantPost: (data: { query: string; chat_id: string; conversation_type?: string }) =>
-    api.post('/assistant/query', data),
-  
+
   getSessionInfo: (chatId: string) => 
     api.get(`/assistant/session/${chatId}`),
   

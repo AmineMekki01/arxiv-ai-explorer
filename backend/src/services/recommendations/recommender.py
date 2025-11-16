@@ -11,9 +11,8 @@ from src.models.paper import Paper
 from src.models.paper_interaction import PaperView, PaperLike, PaperSave
 from src.models.user import UserPreferences
 from src.services.knowledge_graph import Neo4jClient
-from src.services.retrieval.retriever import get_retriever
+from src.services.retrieval.graph_enhanced_retriever import get_graph_enhanced_retriever
 from src.core import logger
-
 
 class PaperRecommender:
     """Generate personalized paper recommendations."""
@@ -486,7 +485,7 @@ class PaperRecommender:
         seed_papers = self.db.query(Paper).filter(Paper.arxiv_id.in_(seed_ids)).all()
         seed_map = {p.arxiv_id: p for p in seed_papers}
 
-        retriever = get_retriever()
+        retriever = get_graph_enhanced_retriever()
         for sid in seed_ids:
             sp = seed_map.get(sid)
             if not sp:

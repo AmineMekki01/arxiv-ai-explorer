@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from agents import Agent, ModelSettings, Runner
 
-from src.agents.tools import search_papers, search_papers_with_graph, get_paper_details
+from src.agents.tools import search_papers_with_graph, get_paper_details
 from src.agents.prompts import RESEARCH_ASSISTANT_PROMPT
 from src.agents.session_factory import SessionFactory, get_session_recommendations
 from src.agents.context_management import SessionABC, FileBackedSession
@@ -39,7 +39,7 @@ class BaseAgent:
             name="ResearchMind Assistant",
             instructions=RESEARCH_ASSISTANT_PROMPT,
             model=self.settings.openai_model,
-            tools=[search_papers, search_papers_with_graph, get_paper_details],
+            tools=[search_papers_with_graph, get_paper_details],
             model_settings=ModelSettings(
                 tool_choice="auto",
             ),
@@ -136,12 +136,13 @@ class BaseAgent:
             
             focused_papers = self.get_focused_papers(chat_id)
             
+            from src.agents.tools import clear_tool_cache
+            clear_tool_cache()
+            
             last_snapshot = self._last_focused_papers_snapshot.get(chat_id, [])
             if sorted(last_snapshot) != sorted(focused_papers):
-                from src.agents.tools import clear_tool_cache
-                clear_tool_cache()
                 self._last_focused_papers_snapshot[chat_id] = focused_papers.copy() if focused_papers else []
-                logger.info(f"Focused papers changed for {chat_id} - cleared tool cache")
+                logger.info(f"Focused papers changed for {chat_id} - reset focused snapshot")
             
             context = await self._prepare_context_for_agent(session, query)
             logger.debug(f"Context prepared: has_context={context['has_context']}, history_length={len(context['history'])}")
@@ -196,67 +197,27 @@ class BaseAgent:
             tool_calls_data = []
             
             logger.info(f"Result type: {type(result)}")
-            logger.info(f"Result has messages: {hasattr(result, 'messages')}")
             logger.info(f"Result attributes: {[attr for attr in dir(result) if not attr.startswith('_')]}")
-            
-            if hasattr(result, 'messages'):
-                logger.info(f"Number of messages: {len(result.messages)}")
-                for i, msg in enumerate(result.messages):
-                    logger.info(f"Message {i}: role={getattr(msg, 'role', 'NO_ROLE')}, type={type(msg)}")
-                    
-                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                        logger.info(f"Found tool_calls in message {i}")
-                        for tool_call in msg.tool_calls:
-                            tool_calls_data.append({
-                                'tool': tool_call.function.name if hasattr(tool_call, 'function') else 'unknown',
-                                'args': tool_call.function.arguments if hasattr(tool_call, 'function') else {}
-                            })
-                    
-                    if hasattr(msg, 'role') and msg.role == 'tool':
-                        logger.info(f"Found tool response in message {i}")
-                        logger.info(f"Content type: {type(msg.content)}")
-                        logger.info(f"Content preview: {str(msg.content)[:300]}")
-                        try:
-                            import json
-                            tool_result = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
-                            logger.info(f"Parsed tool_result type: {type(tool_result)}")
-                            logger.info(f"Tool result keys: {tool_result.keys() if isinstance(tool_result, dict) else 'NOT_DICT'}")
-                            
-                            if isinstance(tool_result, dict):
-                                if 'sources' in tool_result:
-                                    found_sources = tool_result.get('sources', [])
-                                    logger.info(f"{len(found_sources)} sources in tool result!")
-                                    sources.extend(found_sources)
-                                if 'graph_insights' in tool_result:
-                                    graph_insights = tool_result.get('graph_insights', {})
-                                    logger.info("Found graph_insights in tool result!")
-                        except Exception as e:
-                            logger.error(f"Error parsing tool response: {e}")
-                            logger.debug(f"Raw content: {msg.content}")
-
-            elif hasattr(result, 'data'):
-                logger.info("Result has 'data' attribute, checking...")
-                if isinstance(result.data, dict):
-                    sources = result.data.get('sources', [])
-                    graph_insights = result.data.get('graph_insights', {})
-            elif hasattr(result, 'output'):
-                logger.info("Result has 'output' attribute, checking...")
-                if isinstance(result.output, dict):
-                    sources = result.output.get('sources', [])
-                    graph_insights = result.output.get('graph_insights', {})
-            else:
-                logger.warning("Result has no messages/data/output attribute!")
-                
-                logger.info("Attempting to use global tool cache...")
-                try:
-                    from src.agents.tools import get_last_tool_result
+            try:
+                from src.agents.tools import get_last_tool_result, get_all_tool_results
+                all_results = get_all_tool_results()
+                if all_results:
+                    tool_calls_data = all_results
+                    for r in all_results:
+                        rsources = r.get('sources') or []
+                        if rsources:
+                            sources.extend(rsources)
+                        if not graph_insights and r.get('graph_insights'):
+                            graph_insights = r.get('graph_insights', {})
+                    logger.info(f"Retrieved from cache: {len(sources)} sources from {len(all_results)} tool calls")
+                else:
                     cached_result = get_last_tool_result()
                     if cached_result:
                         sources = cached_result.get('sources', [])
                         graph_insights = cached_result.get('graph_insights', {})
-                        logger.info(f"Retrieved from cache: {len(sources)} sources")
-                except Exception as e:
-                    logger.error(f"Cache retrieval failed: {e}")
+                        logger.info(f"Retrieved from cache: {len(sources)} sources (last tool only)")
+            except Exception as e:
+                logger.error(f"Cache retrieval failed: {e}")
             
             logger.info(f"Extracted {len(sources)} sources and {len(tool_calls_data)} tool calls")
             
@@ -294,8 +255,8 @@ class BaseAgent:
             logger.error(f"Error in process_query: {e}", exc_info=True)
             
             try:
-                from src.agents.tools import search_papers
-                search_results = search_papers(query, limit=3)
+                from src.agents.tools import search_papers_with_graph
+                search_results = search_papers_with_graph(query, limit=3)
                 if search_results:
                     fallback_response = f"I found some relevant papers for your query '{query}'. Here are the top results: {search_results}"
                     

@@ -3,65 +3,44 @@ import asyncio
 from loguru import logger
 from datetime import datetime
 
-from src.services.retrieval.retriever import Retriever
 from src.services.retrieval.graph_enhanced_retriever import GraphEnhancedRetriever
 from agents import function_tool
 
-retriever = Retriever()
 graph_retriever = GraphEnhancedRetriever()
 
-_last_tool_result = None
-_last_tool_timestamp = None
+_last_tool_result: Optional[Dict[str, Any]] = None
+_last_tool_timestamp: Optional[datetime] = None
 _last_focused_papers = None
+_tool_results: List[Dict[str, Any]] = []
 
 def get_last_tool_result() -> Optional[Dict[str, Any]]:
-    """Get the last tool result from cache."""
+    """Return the most recent tool result (for backwards compatibility)."""
     return _last_tool_result
 
+def get_all_tool_results() -> List[Dict[str, Any]]:
+    """Return all tool results captured for the current run/message."""
+    return list(_tool_results)
+
 def clear_tool_cache() -> None:
-    """Clear the tool result cache."""
-    global _last_tool_result, _last_tool_timestamp, _last_focused_papers
+    """Clear cached tool results for the current run/message."""
+    global _last_tool_result, _last_tool_timestamp, _last_focused_papers, _tool_results
     _last_tool_result = None
     _last_tool_timestamp = None
     _last_focused_papers = None
+    _tool_results = []
     logger.info("Cleared tool cache")
 
-@function_tool
-def search_papers(
-    query: str,
-    limit: int = 10,
-    exclude_sections: Optional[List[str]] = None,
-    include_sections: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """
-    Basic vector similarity search (use search_papers_with_graph instead for better results).
-    
-    This is a simple, fast search tool for specific paper lookups.
-    ⚠️ For research questions, use search_papers_with_graph instead - it provides:
-    - Citation network analysis
-    - Foundational paper discovery
-    - Better ranking using graph intelligence
-    
-    Use this tool ONLY for:
-    - Looking up a specific arXiv ID (e.g., "arXiv:1706.03762")
-    - Finding a paper by exact author name
-    - Quick fact-checking when you know the paper title
-    - Simple queries where graph analysis isn't needed
-    
-    For most research queries, prefer search_papers_with_graph.
-    
-    Args:
-        query: The search query (arXiv ID, paper title, or author name).
-        limit: The number of results to return.
-        exclude_sections: List of section titles to ignore.
-        include_sections: List of section titles to only consider.
-    Returns:
-        A dictionary containing basic search results (no graph metadata).
-    """
-    print(f"Tool Called with Search papers: {query}")
-    results = retriever.vector_search(query, limit=limit, exclude_sections=exclude_sections, include_sections=include_sections)
-
-    return results
+def _update_tool_cache(tool_result: Dict[str, Any]) -> None:
+    """Update cache with a new tool result, keeping both last and full history."""
+    global _last_tool_result, _last_tool_timestamp, _tool_results
+    _last_tool_result = tool_result
+    _last_tool_timestamp = datetime.now()
+    _tool_results.append(tool_result)
+    sources = tool_result.get("sources") or []
+    logger.info(
+        f"Cached tool result for {tool_result.get('tool_name', 'unknown')} "
+        f"with {len(sources)} sources"
+    )
 
 @function_tool
 def search_papers_with_graph(
@@ -111,7 +90,7 @@ def search_papers_with_graph(
     - "recent advances in diffusion models"
     - "seminal papers on reinforcement learning"
     """
-    logger.info(f"🔍 Graph-enhanced search: {query}")
+    logger.info(f" Graph-enhanced search: {query}")
     
     try:
         loop = asyncio.get_event_loop()
@@ -177,27 +156,64 @@ def search_papers_with_graph(
         logger.info(f"Built {len(sources)} sources with metadata")
         
         tool_result = {
+            "tool_name": "search_papers_with_graph",
             "results": papers,
             "sources": sources,
-            "graph_insights": result.get('graph_insights', {})
+            "graph_insights": result.get('graph_insights', {}),
         }
-        
-        global _last_tool_result, _last_tool_timestamp
-        _last_tool_result = tool_result
-        _last_tool_timestamp = datetime.now()
-        logger.info(f"Cached tool result with {len(sources)} sources")
-        
+
+        _update_tool_cache(tool_result)
+
         return tool_result
     except Exception as e:
         logger.error(f"Graph search failed: {e}")
         logger.info("Falling back to regular search")
         
-        results = retriever.vector_search(query, limit=limit)
-        return {
-            "results": results,
-            "sources": [],
-            "fallback": True
-        }
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = None
+
+        try:
+            if loop is not None and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        graph_retriever.search(
+                            query=query,
+                            limit=limit,
+                            include_foundations=False,
+                            filter_arxiv_ids=filter_arxiv_ids,
+                        ),
+                    )
+                    fallback_result = future.result()
+            else:
+                if loop is None:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                fallback_result = loop.run_until_complete(
+                    graph_retriever.search(
+                        query=query,
+                        limit=limit,
+                        include_foundations=False,
+                        filter_arxiv_ids=filter_arxiv_ids,
+                    )
+                )
+
+            return {
+                "results": fallback_result.get("results", []),
+                "sources": [],
+                "fallback": True,
+            }
+        except Exception as e2:
+            logger.error(f"Fallback graph search also failed: {e2}")
+            return {
+                "results": [],
+                "sources": [],
+                "fallback": True,
+                "error": str(e2),
+            }
 
 @function_tool
 def get_paper_details(arxiv_id: str) -> Dict[str, Any]:
@@ -254,11 +270,34 @@ def get_paper_details(arxiv_id: str) -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"Could not get citation data: {e}")
         
-        chunks = retriever.vector_search(
-            clean_id, 
-            limit=5,
-            exclude_sections=["References", "Bibliography"]
-        )
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    graph_retriever.vector_search(
+                        clean_id,
+                        limit=10,
+                        exclude_sections=["References", "Bibliography"],
+                    ),
+                )
+                chunks = future.result()
+        else:
+            if loop is None:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            chunks = loop.run_until_complete(
+                graph_retriever.vector_search(
+                    clean_id,
+                    limit=10,
+                    exclude_sections=["References", "Bibliography"],
+                )
+            )
         
         result = {
             "arxiv_id": paper_metadata.arxiv_id,
@@ -280,6 +319,36 @@ def get_paper_details(arxiv_id: str) -> Dict[str, Any]:
         }
         
         logger.info(f"Successfully fetched details for {clean_id}")
+
+        sources: List[Dict[str, Any]] = [
+            {
+                "arxiv_id": result.get("arxiv_id"),
+                "title": result.get("title"),
+                "chunks_used": len(result.get("sample_content", [])),
+                "citation_count": result.get("citation_count", 0),
+                "is_seminal": result.get("is_seminal", False),
+                "is_foundational": False,
+                "cited_by_results": 0,
+                "chunk_details": [
+                    {
+                        "section": c.get("section", "Content"),
+                        "text_preview": c.get("text", "")[:200],
+                        "score": 0.0,
+                    }
+                    for c in result.get("sample_content", [])[:3]
+                ],
+            }
+        ]
+
+        _update_tool_cache(
+            {
+                "tool_name": "get_paper_details",
+                "results": [result],
+                "sources": sources,
+                "graph_insights": {},
+            }
+        )
+
         return result
         
     except Exception as e:

@@ -83,14 +83,28 @@ async def send_message(chat_id: str, request: MessageRequest, current_user: User
         if not chat:
             raise HTTPException(status_code=404, detail="Chat not found")
         
+        existing_user_msg = None
+        existing_assistant_msg = None
         if request.client_msg_id:
             existing = chat_store.list_messages(chat_id, limit=200, user_id=str(current_user.id))
-            if any(m.get("client_msg_id") == request.client_msg_id for m in existing):
-                for m in existing:
-                    if m.get("client_msg_id") == request.client_msg_id and m["role"] == "assistant":
-                        return {"status": "success", "message": m, "sources": [], "graph_insights": {}}
+            for m in existing:
+                if m.get("client_msg_id") == request.client_msg_id:
+                    if m["role"] == "assistant":
+                        existing_assistant_msg = m
+                    elif m["role"] == "user":
+                        existing_user_msg = m
+
+            if existing_assistant_msg is not None:
+                return {"status": "success", "message": existing_assistant_msg, "sources": [], "graph_insights": {}}
         
-        chat_store.add_message(chat_id, request.role, request.content, user_id=str(current_user.id), client_msg_id=request.client_msg_id)
+        if existing_user_msg is None:
+            chat_store.add_message(
+                chat_id,
+                request.role,
+                request.content,
+                user_id=str(current_user.id),
+                client_msg_id=request.client_msg_id,
+            )
         result = await asyncio.wait_for(
             retrieval_agent.process_query(request.content, chat_id, "research"),
             timeout=90.0

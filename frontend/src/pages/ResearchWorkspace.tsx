@@ -41,11 +41,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { apiHelpers, apiEndpoints } from '../services/api';
 import ContextManagement from '../components/ContextManagement';
-import { SourcesPanel } from '../components/SourcesPanel';
 import { FocusedPapersBar } from '../components/FocusedPapersBar';
 import { SourcesSidebar } from '../components/SourcesSidebar';
 import '../styles/animations.css';
-import RecentSearches from '../components/RecentSearches';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 
 interface Source {
@@ -639,9 +637,6 @@ const ResearchWorkspace: React.FC = () => {
                 <Box component="span">{type.label}</Box>
               </Button>
             ))}
-          </Box>
-          <Box sx={{ display: { xs: 'none', md: 'block' } }}>
-            <RecentSearches limit={10} variant="compact" onSelect={(q) => setCurrentMessage(q)} />
           </Box>
         </Box>
       </Box>
