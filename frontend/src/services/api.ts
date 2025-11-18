@@ -97,7 +97,9 @@ export const apiEndpoints = {
   getRecommendations: (limit: number = 20, strategies?: string, offset?: number) => 
     api.get('/api/recommendations', { params: { limit, strategies, offset } }),
 
-
+  getSimilarPapers: (arxiv_id: string, method: string = 'concept', limit: number = 10) => 
+    api.get(`/graph/papers/${encodeURIComponent(arxiv_id)}/similar`, { params: { method, limit } }),
+  
   listHistory: (limit: number = 25) => api.get('/history', { params: { limit } }),
   clearHistory: async () => {
     return api.delete('/history');
@@ -304,6 +306,14 @@ export const apiHelpers = {
       return { success: true, data: res.data };
     } catch (e: any) {
       return { success: false, error: e.response?.data?.detail || 'Failed to load citation network' };
+    }
+  },
+  getSimilarPapers: async (arxivId: string, method: string = 'concept', limit: number = 10) => {
+    try {
+      const res = await apiEndpoints.getSimilarPapers(arxivId, method, limit);
+      return { success: true, data: res.data };
+    } catch (e: any) {
+      return { success: false, error: e.response?.data?.detail || 'Failed to load similar papers' };
     }
   },
 };

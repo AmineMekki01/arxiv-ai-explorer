@@ -42,6 +42,16 @@ interface PaperMetadata {
   is_seminal: boolean;
 }
 
+interface SimilarPaper {
+  arxiv_id?: string | null;
+  title: string;
+  citation_count?: number | null;
+  is_seminal?: boolean | null;
+  similarity_score?: number | null;
+  authors?: string[] | null;
+  external_url?: string | null;
+}
+
 export const PaperDetail: React.FC = () => {
   const { arxivId } = useParams<{ arxivId: string }>();
   const navigate = useNavigate();
@@ -56,6 +66,10 @@ export const PaperDetail: React.FC = () => {
   const [isSaved, setIsSaved] = useState<boolean>(false);
   const [saveLoading, setSaveLoading] = useState<boolean>(false);
   const [stats, setStats] = useState<{ likes: number; saves: number; views_total: number; views_7d: number } | null>(null);
+  const [similarPapers, setSimilarPapers] = useState<SimilarPaper[]>([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarError, setSimilarError] = useState<string | null>(null);
+  const [similarMethod, setSimilarMethod] = useState<string>('combined');
   const trackedViewRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -84,6 +98,12 @@ export const PaperDetail: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [arxivId]);
+
+  useEffect(() => {
+    if (arxivId) {
+      fetchSimilarPapers(arxivId, similarMethod);
+    }
+  }, [arxivId, similarMethod]);
 
   const checkLikeStatus = async (id: string) => {
     try {
@@ -202,6 +222,21 @@ export const PaperDetail: React.FC = () => {
       await apiEndpoints.trackPaperView(id, paper?.title);
     } catch (error) {
       console.debug('Failed to track paper view:', error);
+    }
+  };
+
+  const fetchSimilarPapers = async (id: string, method: string) => {
+    try {
+      setSimilarLoading(true);
+      setSimilarError(null);
+      const res = await apiEndpoints.getSimilarPapers(id, method, 6);
+      setSimilarPapers(res.data || []);
+    } catch (error) {
+      console.debug('Failed to fetch similar papers', error);
+      setSimilarError('Failed to load similar papers');
+      setSimilarPapers([]);
+    } finally {
+      setSimilarLoading(false);
     }
   };
 
@@ -533,6 +568,149 @@ export const PaperDetail: React.FC = () => {
             </Card>
           </Grid>
         </Grid>
+
+        <Divider sx={{ my: 3 }} />
+
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="h6" fontWeight="bold" gutterBottom>
+            Similar Papers
+          </Typography>
+
+          <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', gap: 1 }}>
+            <Chip
+              label="Concept"
+              size="small"
+              color={similarMethod === 'concept' ? 'primary' : 'default'}
+              onClick={() => setSimilarMethod('concept')}
+            />
+            <Chip
+              label="Author"
+              size="small"
+              color={similarMethod === 'author' ? 'primary' : 'default'}
+              onClick={() => setSimilarMethod('author')}
+            />
+            <Chip
+              label="Citation"
+              size="small"
+              color={similarMethod === 'citation' ? 'primary' : 'default'}
+              onClick={() => setSimilarMethod('citation')}
+            />
+            <Chip
+              label="Combined"
+              size="small"
+              color={similarMethod === 'combined' ? 'primary' : 'default'}
+              onClick={() => setSimilarMethod('combined')}
+            />
+          </Stack>
+
+          {similarLoading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+              <CircularProgress size={24} />
+            </Box>
+          )}
+
+          {similarError && !similarLoading && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              {similarError}
+            </Alert>
+          )}
+
+          {!similarLoading && !similarError && similarPapers.length === 0 && (
+            <Typography variant="body2" color="text.secondary">
+              No similar papers found for this method.
+            </Typography>
+          )}
+
+          {!similarLoading && similarPapers.length > 0 && (
+            <Grid container spacing={2}>
+              {similarPapers.map((sp, index) => (
+                <Grid
+                  item
+                  xs={12}
+                  sm={6}
+                  md={4}
+                  key={sp.arxiv_id || sp.external_url || `${sp.title}-${index}`}
+                >
+                  <Card
+                    variant="outlined"
+                    sx={{
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      cursor: sp.arxiv_id || sp.external_url ? 'pointer' : 'default',
+                    }}
+                    onClick={() => {
+                      if (sp.arxiv_id) {
+                        navigate(`/paper/${encodeURIComponent(sp.arxiv_id)}`);
+                      } else if (sp.external_url) {
+                        window.open(sp.external_url, '_blank', 'noopener,noreferrer');
+                      }
+                    }}
+                  >
+                    <CardContent sx={{ flex: 1 }}>
+                      <Typography
+                        variant="subtitle1"
+                        fontWeight="bold"
+                        gutterBottom
+                        sx={{
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        {sp.title}
+                      </Typography>
+                      {sp.authors && sp.authors.length > 0 && (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{ mb: 1 }}
+                        >
+                          {sp.authors.slice(0, 3).join(', ')}
+                          {sp.authors.length > 3 && ' et al.'}
+                        </Typography>
+                      )}
+                      <Stack
+                        direction="row"
+                        spacing={0.5}
+                        flexWrap="wrap"
+                        sx={{ gap: 0.5 }}
+                      >
+                        {sp.citation_count != null && (
+                          <Chip
+                            label={`Citations: ${sp.citation_count}`}
+                            size="small"
+                            variant="outlined"
+                          />
+                        )}
+                        {sp.similarity_score != null && (
+                          <Chip
+                            label={`Score: ${sp.similarity_score.toFixed(2)}`}
+                            size="small"
+                            color="secondary"
+                          />
+                        )}
+                        <Chip
+                          label={similarMethod}
+                          size="small"
+                          color="primary"
+                        />
+                        {sp.is_seminal && (
+                          <Chip
+                            label="Seminal"
+                            size="small"
+                            color="warning"
+                          />
+                        )}
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))}
+            </Grid>
+          )}
+        </Box>
       </Paper>
     </Container>
   );
