@@ -2,7 +2,7 @@ import axios from 'axios';
 import { SearchRequest, EnhancedSearchResponse } from '../types/search';
 
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8000',
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
   timeout: 120000,
   headers: {
     'Content-Type': 'application/json',
@@ -16,29 +16,29 @@ api.interceptors.request.use((config) => {
       config.headers = config.headers || {};
       (config.headers as any).Authorization = `Bearer ${token}`;
     }
-  } catch {}
+  } catch { }
   return config;
 });
 
 export const apiEndpoints = {
   health: () => api.get('/health'),
   healthDetailed: () => api.get('/health/detailed'),
-  
-  queryAssistant: (query: string, chatId: string, conversationType: string = 'research') => 
+
+  queryAssistant: (query: string, chatId: string, conversationType: string = 'research') =>
     api.get(`/assistant?q=${encodeURIComponent(query)}&chat_id=${chatId}&conversation_type=${conversationType}`),
 
-  getSessionInfo: (chatId: string) => 
+  getSessionInfo: (chatId: string) =>
     api.get(`/assistant/session/${chatId}`),
-  
-  clearSession: (chatId: string) => 
+
+  clearSession: (chatId: string) =>
     api.delete(`/assistant/session/${chatId}`),
-  
+
   switchContextStrategy: (chatId: string, strategy: string) =>
     api.post(`/assistant/session/${chatId}/strategy`, { strategy }),
-  
+
   getStrategyRecommendations: (conversationType: string) =>
     api.get(`/assistant/recommendations/${conversationType}`),
-  
+
   listStrategies: () =>
     api.get('/assistant/strategies'),
 
@@ -48,25 +48,25 @@ export const apiEndpoints = {
   deleteChat: (chatId: string) => api.delete(`/chats/${chatId}`),
   getMessages: (chatId: string, before?: string, limit?: number) => api.get(`/chats/${chatId}/messages`, { params: { before, limit } }),
   sendMessage: (chatId: string, role: string, content: string, clientMsgId?: string) => api.post(`/chats/${chatId}/messages`, { role, content, client_msg_id: clientMsgId }),
-  
+
   enhancedSearch: (data: SearchRequest) =>
     api.post<EnhancedSearchResponse>('/search/enhanced', data),
-  
+
   enhancedSearchGet: (query: string, limit: number = 10, includeFoundations: boolean = true) =>
     api.get<EnhancedSearchResponse>(`/search/enhanced?query=${encodeURIComponent(query)}&limit=${limit}&include_foundations=${includeFoundations}`),
-  
+
   addFocusedPaper: (chatId: string, data: { arxiv_id: string; title: string }) =>
     api.post(`/assistant/session/${chatId}/focus`, data),
-  
+
   removeFocusedPaper: (chatId: string, arxivId: string) =>
     api.delete(`/assistant/session/${chatId}/focus/${arxivId}`),
-  
+
   clearFocusedPapers: (chatId: string) =>
     api.delete(`/assistant/session/${chatId}/focus`),
-  
+
   getFocusedPapers: (chatId: string) =>
     api.get(`/assistant/session/${chatId}/focus`),
-  
+
   getPaperDetail: (arxivId: string) =>
     api.get(`/assistant/papers/${arxivId}/detail`),
 
@@ -85,21 +85,21 @@ export const apiEndpoints = {
   listSavedPapers: () => api.get('/api/papers/save'),
   checkIfSaved: (arxiv_id: string) =>
     api.get(`/api/papers/save/${encodeURIComponent(arxiv_id)}/check`),
-  
-  trackPaperView: (arxiv_id: string, paper_title?: string) => 
+
+  trackPaperView: (arxiv_id: string, paper_title?: string) =>
     api.post('/api/papers/view', { arxiv_id, paper_title }),
-  
+
   getUserStats: () => api.get('/api/papers/stats'),
 
   getPaperStats: (arxiv_id: string) =>
     api.get(`/api/papers/${encodeURIComponent(arxiv_id)}/stats`),
 
-  getRecommendations: (limit: number = 20, strategies?: string, offset?: number) => 
+  getRecommendations: (limit: number = 20, strategies?: string, offset?: number) =>
     api.get('/api/recommendations', { params: { limit, strategies, offset } }),
 
-  getSimilarPapers: (arxiv_id: string, method: string = 'concept', limit: number = 10) => 
+  getSimilarPapers: (arxiv_id: string, method: string = 'concept', limit: number = 10) =>
     api.get(`/graph/papers/${encodeURIComponent(arxiv_id)}/similar`, { params: { method, limit } }),
-  
+
   listHistory: (limit: number = 25) => api.get('/history', { params: { limit } }),
   clearHistory: async () => {
     return api.delete('/history');
@@ -121,7 +121,7 @@ export const apiHelpers = {
 
   queryAssistant: async (query: string, chatId?: string, conversationType: string = 'research') => {
     const sessionId = chatId || `chat_${Date.now()}`;
-    
+
     try {
       const response = await apiEndpoints.queryAssistant(query, sessionId, conversationType);
       console.log(response);
@@ -196,7 +196,7 @@ export const apiHelpers = {
       };
     }
   },
-  
+
   getSystemStatus: async () => {
     try {
       const response = await apiEndpoints.healthDetailed();
