@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, JSON
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from src.database import Base
 import uuid
@@ -27,5 +27,5 @@ class Message(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     client_msg_id = Column(Text, nullable=True, unique=True)
-    message_metadata = Column(JSONB, nullable=False, default=dict)
+    message_metadata = Column(JSON, nullable=False, default=dict)
     chat = relationship("Chat", back_populates="messages")

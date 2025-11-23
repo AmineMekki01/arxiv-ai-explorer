@@ -131,9 +131,11 @@ async def query_agent(
             }
     except asyncio.TimeoutError:
         raise HTTPException(
-            status_code=408, 
-            detail="Query processing timed out. Please try a simpler query or try again later."
+            status_code=408,
+            detail="Query processing timed out. Please try a simpler query or try again later.",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query processing failed: {e}")
 

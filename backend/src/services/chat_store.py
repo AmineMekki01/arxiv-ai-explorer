@@ -20,14 +20,14 @@ class ChatStore:
             return None
 
     def create_chat(self, name: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Create a new chat."""
         with get_sync_session() as db:
             chat = Chat(
-                id=str(uuid4()),
-                user_id=user_id,
+                id=uuid4(),
+                user_id=self._to_uuid(user_id),
                 name=name,
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
-                turns=0
             )
             db.add(chat)
             db.commit()
@@ -44,6 +44,7 @@ class ChatStore:
             return [self._chat_to_dict(c) for c in chats]
 
     def rename_chat(self, chat_id: str, name: str, user_id: Optional[str] = None) -> bool:
+        """Rename an existing chat by updating Chat.name."""
         with get_sync_session() as db:
             chat = db.query(Chat).filter(Chat.id == chat_id).first()
             if not chat:
@@ -81,19 +82,17 @@ class ChatStore:
             if uid is not None and chat.user_id != uid:
                 raise ValueError("Unauthorized")
             msg = Message(
-                id=str(uuid4()),
-                chat_id=chat_id,
-                user_id=uid,
+                id=uuid4(),
+                chat_id=uuid4() if isinstance(chat_id, str) else chat_id,
                 role=role,
                 content=content,
                 created_at=datetime.utcnow(),
                 client_msg_id=client_msg_id,
                 message_metadata=metadata or {}
             )
+            msg.chat_id = chat.id
             db.add(msg)
-            chat.turns += 1
             chat.updated_at = datetime.utcnow()
-            chat.last_message_preview = (content or "")[:200]
             db.commit()
             db.refresh(msg)
             return self._message_to_dict(msg)
@@ -132,14 +131,16 @@ class ChatStore:
 
     @staticmethod
     def _chat_to_dict(chat: Chat) -> Dict[str, Any]:
+        messages = chat.messages if chat.messages else []
+        last_msg = messages[-1].content[:200] if messages else None
         return {
             "id": str(chat.id),
-            "user_id": chat.user_id,
+            "user_id": str(chat.user_id) if chat.user_id else None,
             "name": chat.name,
             "created_at": chat.created_at.isoformat() if chat.created_at else None,
             "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
-            "last_message_preview": chat.last_message_preview,
-            "turns": chat.turns
+            "last_message_preview": last_msg,
+            "turns": len(messages)
         }
 
     @staticmethod
@@ -148,7 +149,7 @@ class ChatStore:
         return {
             "id": str(msg.id),
             "chat_id": str(msg.chat_id),
-            "user_id": msg.user_id,
+            "user_id": None,
             "role": msg.role,
             "content": msg.content,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
