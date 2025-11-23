@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 
+import json
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -21,6 +23,12 @@ from src.routes.recommendations import router as recommendations_router
 from src.routes.interactions import router as interactions_router
 
 settings = get_settings()
+
+
+class JSONResponseWithJson(JSONResponse):
+    def json(self):
+        return json.loads(self.body.decode(self.charset))
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -82,7 +90,7 @@ app.include_router(interactions_router)
 async def general_exception_handler(request, exc):
     """Handle general exceptions."""
     logger.error(f"Unhandled exception: {exc}")
-    return JSONResponse(
+    return JSONResponseWithJson(
         status_code=500,
         content={"detail": "Internal server error"}
     )
@@ -131,6 +139,8 @@ async def test_database():
             return {"status": "success", "message": "Database connection successful"}
         else:
             raise HTTPException(status_code=500, detail="Database connection failed")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 

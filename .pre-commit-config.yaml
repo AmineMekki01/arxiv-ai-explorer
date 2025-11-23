@@ -1,0 +1,8 @@
+repos:
+  - repo: local
+    hooks:
+      - id: backend-tests
+        name: Run backend tests (quick)
+        entry: bash -c "cd backend && pytest tests/ -q"
+        language: system
+        pass_filenames: false

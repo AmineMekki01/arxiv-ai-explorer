@@ -18,7 +18,7 @@ router = APIRouter(prefix="/graph", tags=["knowledge-graph"])
 @router.get("/papers/{arxiv_id}/similar", response_model=List[SimilarPaper])
 async def get_similar_papers(
     arxiv_id: str,
-    method: str = Query("concept", regex="^(concept|author|citation|combined)$"),
+    method: str = Query("concept", pattern="^(concept|author|citation|combined)$"),
     limit: int = Query(10, ge=1, le=50)
 ):
     """
